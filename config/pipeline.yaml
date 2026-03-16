@@ -8,8 +8,7 @@
 # Source — Oracle RDS
 # -------------------------------------------------------------------
 source:
-  alias: "rds_ogg"                    # GG credential store alias
-  exclude_user: "GG_EXTRACT_USER"     # Exclude GG user's own DML
+  alias: "rdsadmin"                   # GG credential store alias (USERIDALIAS)
 
 # -------------------------------------------------------------------
 # Grouping — advisory threshold (actual groups are defined in the inventory)
@@ -21,57 +20,49 @@ grouping:
 # GoldenGate 19c Classic (Extract + Pump)
 # -------------------------------------------------------------------
 gg19c:
-  home: /oracle/product/19c/oggcore_1
-  oracle_home: /u01/app/oracle/opt/oracle/instantclient_19_30
+  home: /u01/app/oracle/product/19c/oggcore_1
 
   manager:
     port: 7809
-    dynamic_port_list: "7810-7830"    # wide range for N extract + N pump processes
-    autorestart_retries: 10
-    autorestart_wait_minutes: 3
-    purge_min_keep_hours: 48
-
-  extract:
-    # Auto-tuned by generator based on tables/group:
-    #   <=50 tables:  256 MB, parallelism 2
-    #   50-100:       356 MB, parallelism 2
-    #   100+:         456+ MB, parallelism 4
-    max_sga_size_mb: 256              # base — generator may increase
-    parallelism: 2                    # base — generator may increase
+    dynamic_port_list: "7810-7830"
+    autorestart_retries: 3
+    autorestart_wait_minutes: 5
+    resetminutes: 60
+    purge_min_keep_days: 2
+    purge_markers_keep_days: 2
+    lag_info_minutes: 5
+    lag_critical_minutes: 30
 
   trail:
     dir: "./dirdat"
-    size_mb: 2000                     # 2 GB per trail file (production standard)
-    encryption:
-      enabled: true
-      algorithm: "AES256"
-      keyname: "src_trail_key"
 
   pump:
     target_host: "localhost"
     target_manager_port: 7909
-    target_trail_dir: "./dirdat"
+    target_trail_dir: "/u01/app/oracle/product/21c/oggbd_1/dirdat"
 
 # -------------------------------------------------------------------
 # GoldenGate BigData 21c (Replicat → Snowflake via JDBC)
 # -------------------------------------------------------------------
 gg21c:
-  home: /oracle/product/21c/oggbd_1
+  home: /u01/app/oracle/product/21c/oggbd_1
   java_home: /usr/lib/jvm/java-11-openjdk-11.0.25.0.9-2.el8.x86_64
 
   manager:
-    port: 7909
-    dynamic_port_list: "7910-7930"    # wide range for N replicat processes
+    port: 7999
+    dynamic_port_list: "7910-7920"
     autorestart_retries: 5
-    autorestart_wait_minutes: 2
-    purge_min_keep_hours: 48
+    autorestart_wait_minutes: 3
+    purge_min_keep_days: 3
+    lag_info_minutes: 30
+    lag_critical_minutes: 60
 
   trail:
     dir: "./dirdat"
 
   replicat:
-    grouptransops: 5000               # batch commit every 5000 tx (Snowflake optimized)
-    maxtransops: 20000
+    grouptransops: 1000
+    maxtransops: 1000
 
   snowflake:
     account: "your_account"           # e.g. xy12345.us-east-1

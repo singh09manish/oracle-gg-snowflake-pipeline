@@ -4,9 +4,8 @@
 # Prerequisites:
 #   - source ~/gg_environments.sh 19
 #   - python3 -m app.main generate --input input/table_inventory.xlsx  (already run)
-#   - ENCKEYS provisioned for AES256 trail encryption
 #   - Credential store configured:  ggsci> ADD CREDENTIALSTORE
-#                                   ggsci> ALTER CREDENTIALSTORE ADD USER ... ALIAS rds_ogg
+#                                   ggsci> ALTER CREDENTIALSTORE ADD USER ... ALIAS rdsadmin
 #
 # Usage:
 #   ./scripts/deploy_gg19c.sh [--dry-run]

@@ -7,7 +7,6 @@ Uses Jinja2 templates from templates/ → writes to output/.
 from __future__ import annotations
 
 import logging
-import math
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -64,15 +63,6 @@ class Generator:
         self._gen_gg19c_ggsci()
         self._gen_gg21c_ggsci()
 
-        # SGA sizing warning
-        total_tables = self.manifest.total_tables
-        sga = self._sga_size_mb()
-        if total_tables > 200 and sga < 512:
-            self.manifest.warnings.append(
-                f"max_sga_size={sga}MB may be low for {total_tables} tables. "
-                f"Consider 512-1024MB."
-            )
-
         log.info("Generated %d files.", len(self.manifest.files_written))
         return self.manifest
 
@@ -86,21 +76,6 @@ class Generator:
             raise FileNotFoundError(f"Config not found: {path}")
         with open(path) as f:
             return yaml.safe_load(f)
-
-    def _sga_size_mb(self) -> int:
-        max_tables = max(g.table_count for g in self.groups)
-        # Rule of thumb: 256MB base + 2MB per table above 50
-        base = self.cfg["gg19c"].get("extract", {}).get("max_sga_size_mb", 256)
-        if max_tables > 50:
-            base = max(base, 256 + (max_tables - 50) * 2)
-        return min(base, 2048)  # cap at 2GB
-
-    def _parallelism(self) -> int:
-        max_tables = max(g.table_count for g in self.groups)
-        base = self.cfg["gg19c"].get("extract", {}).get("parallelism", 2)
-        if max_tables > 100:
-            return max(base, 4)
-        return base
 
     # -------------------------------------------------------------------
     # Write helper
@@ -124,19 +99,11 @@ class Generator:
     def _gg19c_ctx(self, group: ExtractGroup) -> Dict[str, Any]:
         c = self.cfg
         trail = c["gg19c"]["trail"]
-        enc = trail.get("encryption", {})
         pump = c["gg19c"]["pump"]
         return {
             "group":              group,
             "source_alias":       c["source"]["alias"],
-            "exclude_user":       c["source"]["exclude_user"],
-            "sga_size_mb":        self._sga_size_mb(),
-            "parallelism":        self._parallelism(),
-            "encryption_enabled": enc.get("enabled", True),
-            "encryption_algorithm": enc.get("algorithm", "AES256"),
-            "encryption_keyname":   enc.get("keyname", "src_trail_key"),
             "trail_dir":          trail.get("dir", "./dirdat"),
-            "trail_size_mb":      trail.get("size_mb", 2000),
             "target_host":        pump.get("target_host", "localhost"),
             "target_mgr_port":    pump.get("target_manager_port", 7909),
             "target_trail_dir":   pump.get("target_trail_dir", "./dirdat"),
@@ -147,8 +114,8 @@ class Generator:
         sf = c["gg21c"]["snowflake"]
         return {
             "group":              group,
-            "grouptransops":      c["gg21c"].get("replicat", {}).get("grouptransops", 5000),
-            "maxtransops":        c["gg21c"].get("replicat", {}).get("maxtransops", 20000),
+            "grouptransops":      c["gg21c"].get("replicat", {}).get("grouptransops", 1000),
+            "maxtransops":        c["gg21c"].get("replicat", {}).get("maxtransops", 1000),
             "snowflake_account":  sf["account"],
             "snowflake_warehouse": sf["warehouse"],
             "snowflake_database": sf["database"],
@@ -209,7 +176,7 @@ class Generator:
     def _gen_snowflake_props(self, group: ExtractGroup) -> None:
         ctx = self._gg21c_ctx(group)
         content = self._render("gg21c/snowflake.props.j2", ctx)
-        self._write(f"gg21c/dirprm/{group.replicat_name}.props", content)
+        self._write(f"gg21c/dirprm/{group.replicat_name}.properties", content)
 
     # -------------------------------------------------------------------
     # GGSCI obeyfiles — GG 19c
@@ -220,10 +187,6 @@ class Generator:
         alias = c["source"]["alias"]
         trail = c["gg19c"]["trail"]
         pump = c["gg19c"]["pump"]
-        trail_size = trail.get("size_mb", 2000)
-
-        # Collect all unique schemas across all groups
-        all_schemas = sorted({s for g in self.groups for s in g.schemas})
 
         # 01: ADD TRANDATA per table (not SCHEMATRANDATA — explicit is safer)
         lines = [
@@ -248,7 +211,7 @@ class Generator:
         for g in self.groups:
             lines += [
                 f"ADD EXTRACT {g.extract_name}, INTEGRATED TRANLOG, BEGIN NOW",
-                f"ADD EXTTRAIL {trail['dir']}/{g.extract_trail}, EXTRACT {g.extract_name}, MEGABYTES {trail_size}",
+                f"ADD EXTTRAIL {trail['dir']}/{g.extract_trail}, EXTRACT {g.extract_name}",
                 f"REGISTER EXTRACT {g.extract_name} DATABASE",
                 "",
             ]
@@ -259,7 +222,7 @@ class Generator:
         for g in self.groups:
             lines += [
                 f"ADD EXTRACT {g.pump_name}, EXTTRAILSOURCE {trail['dir']}/{g.extract_trail}",
-                f"ADD RMTTRAIL {pump['target_trail_dir']}/{g.pump_trail}, EXTRACT {g.pump_name}, MEGABYTES {trail_size}",
+                f"ADD RMTTRAIL {pump['target_trail_dir']}/{g.pump_trail}, EXTRACT {g.pump_name}",
                 "",
             ]
         self._write_oby("gg19c/ggsci/03_add_pumps.oby", lines)

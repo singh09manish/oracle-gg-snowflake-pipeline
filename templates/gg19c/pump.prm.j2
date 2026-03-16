@@ -6,22 +6,20 @@
 -- =================================================================
 
 EXTRACT {{ group.pump_name }}
-
--- PASSTHRU: zero transformation, maximum throughput
+-- Send to GG 21c on same server, port {{ target_mgr_port }}
+RMTHOST {{ target_host }}, MGRPORT {{ target_mgr_port }}
+RMTTRAIL {{ target_trail_dir }}/{{ group.pump_trail }}
 PASSTHRU
 
--- Report progress every minute
-REPORTCOUNT EVERY 1 MINUTES, RATE
+-- Performance
+DYNAMICRESOLUTION
+NUMFILES 1000
 
--- Deliver to GG BigData 21c Manager (same EC2)
-RMTHOST {{ target_host }}, MGRPORT {{ target_mgr_port }}, COMPRESS
+-- Monitoring
+REPORTCOUNT EVERY 30 MINUTES, RATE
+WARNLONGTRANS 2H, CHECKINTERVAL 30M
 
--- Pump trail read by GG 21c Replicat
-RMTTRAIL {{ target_trail_dir }}/{{ group.pump_trail }}, MEGABYTES {{ trail_size_mb }}
-
--- -----------------------------------------------------------------
--- TABLE rules (must mirror extract)
--- -----------------------------------------------------------------
-{% for t in group.tables %}
-TABLE {{ t.schema }}.{{ t.name }};
+-- Pass through schemas
+{% for schema in group.schemas %}
+TABLE {{ schema }}.*;
 {% endfor %}

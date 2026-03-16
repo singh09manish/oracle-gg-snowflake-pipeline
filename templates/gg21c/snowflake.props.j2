@@ -17,7 +17,6 @@ gg.handler.snowflake.type=jdbc
 gg.handler.snowflake.DriverClass=net.snowflake.client.jdbc.SnowflakeDriver
 
 # Connection URL — warehouse, database, role, default schema
-# Target schema per table is controlled by MAP rule in .prm file.
 gg.handler.snowflake.connectionURL=jdbc:snowflake://{{ snowflake_account }}.snowflakecomputing.com/?warehouse={{ snowflake_warehouse }}&db={{ snowflake_database }}&schema={{ group.default_target_schema }}&role={{ snowflake_role }}
 
 # ---------------------------------------------------------------
@@ -27,22 +26,26 @@ gg.handler.snowflake.userName=${SNOWFLAKE_USER}
 gg.handler.snowflake.password=${SNOWFLAKE_PASSWORD}
 
 # ---------------------------------------------------------------
-# CDC operation mode
-#   INSERT → insert row
-#   UPDATE → MERGE on PK (upsert) — requires PK supplemental logging
-#   DELETE → delete row by PK
+# CDC operation mode — INSERTALLRECORDS
+# All operations (insert/update/delete) are appended as inserts
+# to a staging table. Downstream Snowflake tasks/streams handle
+# MERGE/SCD logic.
 # ---------------------------------------------------------------
 gg.handler.snowflake.mode=op
 gg.handler.snowflake.insertOpMode=insert
-gg.handler.snowflake.updateOpMode=upsert
-gg.handler.snowflake.deleteOpMode=delete
+gg.handler.snowflake.updateOpMode=insert
+gg.handler.snowflake.deleteOpMode=insert
+
+# ---------------------------------------------------------------
+# Include GG metadata tokens and header info
+# ---------------------------------------------------------------
+gg.handler.snowflake.IncludeTokens=true
+gg.handler.snowflake.includeOpTimestamp=true
 
 # ---------------------------------------------------------------
 # Performance tuning
 # ---------------------------------------------------------------
-# Accumulate up to 10000 ops before flushing to Snowflake
 gg.handler.snowflake.maxOperations=10000
-# Don't force-flush on every CDC op (batching is faster)
 gg.handler.snowflake.flushOnCDCOperation=false
 
 # ---------------------------------------------------------------
@@ -68,7 +71,5 @@ gg.report.time=30sec
 
 # ---------------------------------------------------------------
 # Classpath
-# Snowflake JDBC jar must be placed in $GG21C_HOME/dirprm/
-# Download: https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/
 # ---------------------------------------------------------------
 gg.classpath={{ gg21c_home }}/dirprm/{{ snowflake_jdbc_jar }}:{{ gg21c_home }}/ggjava/ggjava.jar

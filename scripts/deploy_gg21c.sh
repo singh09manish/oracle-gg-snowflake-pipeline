@@ -40,7 +40,7 @@ if [ -z "${SNOWFLAKE_USER:-}" ] || [ -z "${SNOWFLAKE_PASSWORD:-}" ]; then
 fi
 
 # Check Snowflake JDBC jar exists
-JDBC_JAR=$(grep -oP 'snowflake-jdbc-[^ :]+\.jar' "$GEN_DIR/dirprm/"*.props 2>/dev/null | head -1)
+JDBC_JAR=$(grep -oP 'snowflake-jdbc-[^ :]+\.jar' "$GEN_DIR/dirprm/"*.properties 2>/dev/null | head -1)
 if [ -n "$JDBC_JAR" ] && [ ! -f "$GG_HOME/dirprm/$JDBC_JAR" ]; then
     log "WARNING: Snowflake JDBC jar not found at $GG_HOME/dirprm/$JDBC_JAR"
     log "  Download from: https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/"
@@ -63,15 +63,15 @@ run_ggsci() {
 
 DIRPRM="$GG_HOME/dirprm"
 
-log "Copying .prm and .props files → $DIRPRM/"
+log "Copying .prm and .properties files → $DIRPRM/"
 if [ "$DRY_RUN" -eq 1 ]; then
     log "[DRY-RUN] cp $GEN_DIR/dirprm/*.{prm,props} $DIRPRM/"
     ls -la "$GEN_DIR/dirprm/"*.{prm,props} 2>/dev/null
 else
     cp "$GEN_DIR/dirprm/"*.prm "$DIRPRM/"
-    cp "$GEN_DIR/dirprm/"*.props "$DIRPRM/"
-    COUNT=$(ls "$GEN_DIR/dirprm/"*.prm "$GEN_DIR/dirprm/"*.props 2>/dev/null | wc -l | tr -d ' ')
-    log "Copied $COUNT files (.prm + .props)"
+    cp "$GEN_DIR/dirprm/"*.properties "$DIRPRM/"
+    COUNT=$(ls "$GEN_DIR/dirprm/"*.prm "$GEN_DIR/dirprm/"*.properties 2>/dev/null | wc -l | tr -d ' ')
+    log "Copied $COUNT files (.prm + .properties)"
 fi
 
 log "--- Step 1: ADD REPLICATS ---"
