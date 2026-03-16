@@ -1,0 +1,13 @@
+PORT {{ manager.port }}
+DYNAMICPORTLIST {{ manager.dynamic_port_list }}
+
+-- Auto-restart all extract and pump processes on failure
+AUTORESTART EXTRACT *, RETRIES {{ manager.autorestart_retries }}, WAITMINUTES {{ manager.autorestart_wait_minutes }}
+
+-- Purge trail files only after downstream checkpoints confirm processing
+PURGEOLDEXTRACTS ./dirdat/*, USECHECKPOINTS, MINKEEPHOURS {{ manager.purge_min_keep_hours }}
+
+-- Lag alerting thresholds
+LAGREPORTHOURS 1
+LAGINFOMINUTES 15
+LAGCRITICALMINUTES 30

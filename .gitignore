@@ -1,0 +1,19 @@
+# Generated output (regenerate with: python3 -m app.main generate)
+output/
+
+# Credentials (NEVER commit)
+config/env.yaml
+*.env
+
+# Reports
+reports/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# OS
+.DS_Store

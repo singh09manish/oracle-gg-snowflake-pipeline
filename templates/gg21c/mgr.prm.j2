@@ -1,0 +1,13 @@
+PORT {{ manager.port }}
+DYNAMICPORTLIST {{ manager.dynamic_port_list }}
+
+-- Auto-restart all replicat processes on failure
+AUTORESTART REPLICAT *, RETRIES {{ manager.autorestart_retries }}, WAITMINUTES {{ manager.autorestart_wait_minutes }}
+
+-- Purge pump trails after Replicat checkpoints confirm Snowflake delivery
+PURGEOLDEXTRACTS ./dirdat/*, USECHECKPOINTS, MINKEEPHOURS {{ manager.purge_min_keep_hours }}
+
+-- Lag alerting thresholds (tighter than extract — Snowflake is the SLA boundary)
+LAGREPORTHOURS 1
+LAGINFOMINUTES 15
+LAGCRITICALMINUTES 30

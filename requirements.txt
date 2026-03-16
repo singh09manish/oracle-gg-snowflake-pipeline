@@ -1,0 +1,13 @@
+# Core dependencies
+PyYAML==6.0.2
+Jinja2==3.1.4
+openpyxl==3.1.5
+
+# Oracle connectivity
+oracledb==3.4.2
+
+# Snowflake connectivity
+snowflake-connector-python==4.3.0
+
+# AWS Secrets Manager (password injection)
+boto3==1.42.67
