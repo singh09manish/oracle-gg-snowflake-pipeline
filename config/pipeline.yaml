@@ -77,12 +77,55 @@ gg21c:
     jdbc_jar: "snowflake-jdbc-3.14.4.jar"
 
 # -------------------------------------------------------------------
-# Archive
+# Archive — trail file archival before manager purges them
 # -------------------------------------------------------------------
 archive:
   enabled: true
-  archive_dir: "/mnt/archive/trails"
-  min_age_hours: 48
+  archive_dir: "/mnt/archive/trails"  # local dir, NFS mount, or S3 prefix
+  min_age_hours: 24                   # only archive trails older than this
+  s3:
+    enabled: false                    # set true to archive to S3 instead of local
+    bucket: "your-bucket"
+    prefix: "gg-trails"
+    region: "us-east-1"
+
+# -------------------------------------------------------------------
+# Monitoring & Alerting
+# -------------------------------------------------------------------
+monitoring:
+  # Health check thresholds
+  lag_warn_seconds: 300               # 5 min — warn
+  lag_critical_seconds: 1800          # 30 min — critical alert
+  trail_disk_warn_gb: 50              # disk usage threshold
+
+  # Alerting channels (configure one or more)
+  alerting:
+    # Email via sendmail/mailx (available on most RHEL)
+    email:
+      enabled: false
+      recipients: "oncall@yourcompany.com"
+      from: "gg-monitor@yourcompany.com"
+
+    # Slack incoming webhook
+    slack:
+      enabled: false
+      webhook_url: "https://hooks.slack.com/services/T00/B00/xxx"
+      channel: "#gg-alerts"
+
+    # PagerDuty Events API v2
+    pagerduty:
+      enabled: false
+      routing_key: "your-pagerduty-integration-key"
+
+    # Generic webhook (SNS, Teams, custom)
+    webhook:
+      enabled: false
+      url: "https://your-endpoint.com/alerts"
+      method: "POST"                  # POST or GET
+      headers: "Content-Type: application/json"
+
+    # Log file (always enabled as fallback)
+    log_file: "/var/log/gg-monitor/alerts.log"
 
 # -------------------------------------------------------------------
 # Audit

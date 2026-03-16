@@ -11,8 +11,8 @@
 
 set -euo pipefail
 
-GG19C_HOME="${GG19C_HOME:-/oracle/product/19c/oggcore_1}"
-GG21C_HOME="${GG21C_HOME:-/oracle/product/21c/oggbd_1}"
+GG19C_HOME="${GG19C_HOME:-/u01/app/oracle/product/19c/oggcore_1}"
+GG21C_HOME="${GG21C_HOME:-/u01/app/oracle/product/21c/oggbd_1}"
 TRAIL_WARN_GB="${TRAIL_WARN_GB:-50}"
 fail=0
 
