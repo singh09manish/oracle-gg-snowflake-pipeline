@@ -35,11 +35,16 @@ gg19c:
 
   trail:
     dir: "./dirdat"
+    encryption:
+      enabled: true
+      algorithm: "AES256"             # AES256 trail encryption at rest
+      keyname: "src_trail_key"        # ENCKEYS file must be provisioned
 
   pump:
     target_host: "localhost"
     target_manager_port: 7909
     target_trail_dir: "/u01/app/oracle/product/21c/oggbd_1/dirdat"
+    encrypt_rmthost: true               # OGG_AES256_GCM for data in transit
 
 # -------------------------------------------------------------------
 # GoldenGate BigData 21c (Replicat → Snowflake via JDBC)

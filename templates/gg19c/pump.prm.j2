@@ -6,8 +6,20 @@
 -- =================================================================
 
 EXTRACT {{ group.pump_name }}
+
+{% if encryption_enabled -%}
+-- Decrypt incoming encrypted trail
+DECRYPTTRAIL {{ encryption_algorithm }}
+-- Encrypt remote trail written to GG 21c
+ENCRYPTTRAIL {{ encryption_algorithm }}, KEYNAME {{ encryption_keyname }}
+{% endif -%}
+
 -- Send to GG 21c on same server, port {{ target_mgr_port }}
+{% if encrypt_rmthost -%}
+RMTHOST {{ target_host }}, MGRPORT {{ target_mgr_port }}, ENCRYPT AES256
+{% else -%}
 RMTHOST {{ target_host }}, MGRPORT {{ target_mgr_port }}
+{% endif -%}
 RMTTRAIL {{ target_trail_dir }}/{{ group.pump_trail }}
 PASSTHRU
 

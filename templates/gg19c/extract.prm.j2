@@ -6,6 +6,11 @@
 
 EXTRACT {{ group.extract_name }}
 USERIDALIAS {{ source_alias }}
+
+{% if encryption_enabled -%}
+-- Encrypt trail files at rest (AES256)
+ENCRYPTTRAIL {{ encryption_algorithm }}, KEYNAME {{ encryption_keyname }}
+{% endif -%}
 EXTTRAIL {{ trail_dir }}/{{ group.extract_trail }}
 
 NOCOMPRESSUPDATES

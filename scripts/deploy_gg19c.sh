@@ -4,6 +4,7 @@
 # Prerequisites:
 #   - source ~/gg_environments.sh 19
 #   - python3 -m app.main generate --input input/table_inventory.xlsx  (already run)
+#   - ENCKEYS file provisioned for AES256 trail encryption (in $GG_HOME)
 #   - Credential store configured:  ggsci> ADD CREDENTIALSTORE
 #                                   ggsci> ALTER CREDENTIALSTORE ADD USER ... ALIAS rdsadmin
 #

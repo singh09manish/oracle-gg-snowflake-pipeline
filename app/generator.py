@@ -99,14 +99,21 @@ class Generator:
     def _gg19c_ctx(self, group: ExtractGroup) -> Dict[str, Any]:
         c = self.cfg
         trail = c["gg19c"]["trail"]
+        enc = trail.get("encryption", {})
         pump = c["gg19c"]["pump"]
         return {
             "group":              group,
             "source_alias":       c["source"]["alias"],
             "trail_dir":          trail.get("dir", "./dirdat"),
+            # Encryption — trail files at rest
+            "encryption_enabled": enc.get("enabled", False),
+            "encryption_algorithm": enc.get("algorithm", "AES256"),
+            "encryption_keyname":   enc.get("keyname", "src_trail_key"),
+            # Pump — data in transit
             "target_host":        pump.get("target_host", "localhost"),
             "target_mgr_port":    pump.get("target_manager_port", 7909),
             "target_trail_dir":   pump.get("target_trail_dir", "./dirdat"),
+            "encrypt_rmthost":    pump.get("encrypt_rmthost", False),
         }
 
     def _gg21c_ctx(self, group: ExtractGroup) -> Dict[str, Any]:

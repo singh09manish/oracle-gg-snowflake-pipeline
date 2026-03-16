@@ -17,7 +17,8 @@ gg.handler.snowflake.type=jdbc
 gg.handler.snowflake.DriverClass=net.snowflake.client.jdbc.SnowflakeDriver
 
 # Connection URL — warehouse, database, role, default schema
-gg.handler.snowflake.connectionURL=jdbc:snowflake://{{ snowflake_account }}.snowflakecomputing.com/?warehouse={{ snowflake_warehouse }}&db={{ snowflake_database }}&schema={{ group.default_target_schema }}&role={{ snowflake_role }}
+# Snowflake JDBC enforces TLS 1.2+ by default (encrypted in transit to Snowflake)
+gg.handler.snowflake.connectionURL=jdbc:snowflake://{{ snowflake_account }}.snowflakecomputing.com/?warehouse={{ snowflake_warehouse }}&db={{ snowflake_database }}&schema={{ group.default_target_schema }}&role={{ snowflake_role }}&ssl=on
 
 # ---------------------------------------------------------------
 # Authentication (injected via environment variables at runtime)
