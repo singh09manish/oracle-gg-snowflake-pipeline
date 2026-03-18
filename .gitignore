@@ -3,7 +3,13 @@ output/
 
 # Credentials (NEVER commit)
 config/env.yaml
-*.env
+
+# Environment profiles (contain connection details — NEVER commit)
+envs/*.env
+!envs/default.env
+
+# ggctl state
+.ggctl_state
 
 # Reports
 reports/
