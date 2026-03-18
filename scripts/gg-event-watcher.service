@@ -1,0 +1,49 @@
+# /etc/systemd/system/gg-event-watcher.service
+#
+# Systemd service for GoldenGate Event Watcher
+#
+# Installation:
+#   sudo cp scripts/gg-event-watcher.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gg-event-watcher
+#
+# Logs:
+#   journalctl -u gg-event-watcher -f
+#
+# To watch both GG 19c and GG 21c, create two service instances:
+#   gg-event-watcher-19c.service (GG_HOME=/u01/.../19c/oggcore_1)
+#   gg-event-watcher-21c.service (GG_HOME=/u01/.../21c/oggbd_1)
+
+[Unit]
+Description=GoldenGate ABEND Event Watcher
+After=network.target
+Documentation=https://github.com/singh09manish/oracle-gg-snowflake-pipeline
+
+[Service]
+Type=simple
+User=oracle
+Group=oinstall
+
+# Paths — adjust to your environment
+Environment=GG_HOME=/u01/app/oracle/product/19c/oggcore_1
+Environment=PIPELINE_HOME=/home/oracle/oracle-gg-snowflake-pipeline
+
+ExecStart=/usr/bin/python3 ${PIPELINE_HOME}/scripts/event_watcher.py \
+    --gg-home ${GG_HOME} \
+    --config ${PIPELINE_HOME}/config/pipeline.yaml \
+    --inventory ${PIPELINE_HOME}/input/table_inventory.xlsx \
+    --auto-disable
+
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gg-event-watcher
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=${PIPELINE_HOME}/input /var/log/gg-monitor
+
+[Install]
+WantedBy=multi-user.target

@@ -28,11 +28,19 @@ class TableInfo:
     has_lobs: bool = False
     has_trandata: bool = False  # populated by validator
 
+    # --- Enable/Disable control ---
+    enabled: bool = True               # False = excluded from .prm generation
+    disabled_reason: str = ""          # why the table was disabled (user note or auto)
+    disabled_at: str = ""              # ISO timestamp of when it was disabled
+
     def __post_init__(self) -> None:
         self.schema = self.schema.strip().upper()
         self.name = self.name.strip().upper()
         if not self.target_schema:
             self.target_schema = self.schema
+        # Normalise enabled field from various Excel representations
+        if isinstance(self.enabled, str):
+            self.enabled = self.enabled.strip().upper() not in ("N", "NO", "FALSE", "0", "DISABLED")
 
     @property
     def fqn(self) -> str:

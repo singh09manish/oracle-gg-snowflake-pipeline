@@ -36,8 +36,23 @@ def group_tables(
     if not tables:
         raise ValueError("No tables to group")
 
+    # Filter out disabled tables — they are excluded from all .prm generation
+    disabled = [t for t in tables if not t.enabled]
+    active = [t for t in tables if t.enabled]
+    if disabled:
+        log.info(
+            "Excluding %d DISABLED tables from group assignment:",
+            len(disabled),
+        )
+        for t in disabled:
+            reason = f" — {t.disabled_reason}" if t.disabled_reason else ""
+            log.info("  ✗ %s (group %d)%s", t.fqn, t.group_id, reason)
+
+    if not active:
+        raise ValueError("All tables are disabled — nothing to generate")
+
     by_group: Dict[int, List[TableInfo]] = {}
-    for t in tables:
+    for t in active:
         by_group.setdefault(t.group_id, []).append(t)
 
     groups: List[ExtractGroup] = []

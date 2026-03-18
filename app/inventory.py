@@ -1,10 +1,14 @@
 """
-Read the table inventory from Excel (.xlsx) or CSV.
+Read and write the table inventory from/to Excel (.xlsx) or CSV.
 
 Expected columns (case-insensitive):
-  - schema       (required)  — Oracle source schema
-  - table_name   (required)  — Oracle table name
-  - target_schema (optional) — Snowflake target schema (defaults to source schema)
+  - schema         (required)  — Oracle source schema
+  - table_name     (required)  — Oracle table name
+  - group_id       (required)  — Extract group assignment
+  - target_schema  (optional)  — Snowflake target schema (defaults to source schema)
+  - enabled        (optional)  — Y/N toggle (defaults to Y if missing)
+  - disabled_reason(optional)  — Why the table was disabled
+  - disabled_at    (optional)  — ISO timestamp of when it was disabled
 
 Any extra columns are silently ignored.
 """
@@ -13,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -25,6 +30,9 @@ _SCHEMA_ALIASES = {"schema", "schema_name", "owner", "source_schema"}
 _TABLE_ALIASES = {"table_name", "tablename", "table", "name", "object_name"}
 _TARGET_ALIASES = {"target_schema", "target_schema_name", "tgt_schema", "snowflake_schema"}
 _GROUP_ALIASES = {"group_id", "group", "extract_group"}
+_ENABLED_ALIASES = {"enabled", "active", "status"}
+_REASON_ALIASES = {"disabled_reason", "reason", "disable_reason"}
+_DISABLED_AT_ALIASES = {"disabled_at", "disabled_date", "disabled_timestamp"}
 
 
 def read_inventory(path: str | Path) -> List[TableInfo]:
@@ -138,6 +146,8 @@ def _parse_rows(rows: List[dict], source: str) -> List[TableInfo]:
             f"  Found columns: {sorted(all_keys)}"
         )
 
+    has_enabled_col = bool(all_keys & _ENABLED_ALIASES)
+
     tables: List[TableInfo] = []
     for i, row in enumerate(rows, start=2):  # row 2 = first data row in Excel
         schema = _resolve_col(row, _SCHEMA_ALIASES) or ""
@@ -156,7 +166,17 @@ def _parse_rows(rows: List[dict], source: str) -> List[TableInfo]:
         except ValueError:
             raise ValueError(f"Row {i}: group_id must be an integer, got '{group_raw}'")
 
-        tables.append(TableInfo(schema=schema, name=table, group_id=group_id, target_schema=target))
+        # Enabled/disabled toggle (defaults to Y if column is absent)
+        enabled_raw = _resolve_col(row, _ENABLED_ALIASES) if has_enabled_col else "Y"
+        enabled = (enabled_raw or "Y").strip().upper() not in ("N", "NO", "FALSE", "0", "DISABLED")
+
+        disabled_reason = _resolve_col(row, _REASON_ALIASES) or ""
+        disabled_at = _resolve_col(row, _DISABLED_AT_ALIASES) or ""
+
+        tables.append(TableInfo(
+            schema=schema, name=table, group_id=group_id, target_schema=target,
+            enabled=enabled, disabled_reason=disabled_reason, disabled_at=disabled_at,
+        ))
     return tables
 
 
@@ -177,8 +197,113 @@ def _validate(tables: List[TableInfo], source: str) -> None:
     if not tables:
         raise ValueError(f"No valid tables found in {source}")
 
-    schemas = {t.schema for t in tables}
+    enabled = [t for t in tables if t.enabled]
+    disabled = [t for t in tables if not t.enabled]
+    schemas = {t.schema for t in enabled}
     log.info(
         "Loaded %d tables across %d schemas from %s: %s",
         len(tables), len(schemas), source, ", ".join(sorted(schemas)),
     )
+    if disabled:
+        log.info(
+            "  %d tables DISABLED (will be excluded from .prm generation)",
+            len(disabled),
+        )
+        for t in disabled:
+            reason = f" — {t.disabled_reason}" if t.disabled_reason else ""
+            log.info("    %s%s", t.fqn, reason)
+
+
+# ---------------------------------------------------------------------------
+# Write inventory back to Excel (for enable/disable operations)
+# ---------------------------------------------------------------------------
+
+def write_inventory(tables: List[TableInfo], path: str | Path) -> None:
+    """
+    Write the full table list back to Excel, preserving all fields
+    including enabled/disabled_reason/disabled_at.
+
+    This is used by the `disable` and `enable` CLI commands to update
+    the inventory in place.
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        raise ImportError("openpyxl is required to write .xlsx files.\n  pip install openpyxl")
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "table_inventory"
+
+    # Header row
+    headers = [
+        "schema", "table_name", "target_schema", "group_id",
+        "enabled", "disabled_reason", "disabled_at",
+    ]
+    ws.append(headers)
+
+    # Data rows
+    for t in sorted(tables, key=lambda x: (x.group_id, x.schema, x.name)):
+        ws.append([
+            t.schema,
+            t.name,
+            t.target_schema,
+            t.group_id,
+            "Y" if t.enabled else "N",
+            t.disabled_reason,
+            t.disabled_at,
+        ])
+
+    # Auto-width columns
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col) + 2
+        ws.column_dimensions[col[0].column_letter].width = max_len
+
+    # Conditional formatting — highlight disabled rows in red
+    from openpyxl.styles import PatternFill, Font
+    red_fill = PatternFill(start_color="FFE0E0", end_color="FFE0E0", fill_type="solid")
+    red_font = Font(color="CC0000")
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(headers)):
+        enabled_cell = row[4]  # 0-indexed: column E = "enabled"
+        if str(enabled_cell.value).upper() == "N":
+            for cell in row:
+                cell.fill = red_fill
+                cell.font = red_font
+
+    wb.save(path)
+    log.info("Inventory written → %s  (%d tables, %d enabled, %d disabled)",
+             path, len(tables),
+             sum(1 for t in tables if t.enabled),
+             sum(1 for t in tables if not t.enabled))
+
+
+def toggle_table(
+    tables: List[TableInfo],
+    fqn: str,
+    *,
+    enable: bool,
+    reason: str = "",
+) -> TableInfo:
+    """
+    Enable or disable a single table by FQN (SCHEMA.TABLE).
+
+    Returns the modified TableInfo.
+    Raises KeyError if table not found.
+    """
+    fqn_upper = fqn.strip().upper()
+    for t in tables:
+        if t.fqn == fqn_upper:
+            t.enabled = enable
+            if enable:
+                t.disabled_reason = ""
+                t.disabled_at = ""
+                log.info("ENABLED  %s%s", t.fqn, f" (was: {reason})" if reason else "")
+            else:
+                t.disabled_reason = reason or "manually disabled"
+                t.disabled_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                log.info("DISABLED %s — %s", t.fqn, t.disabled_reason)
+            return t
+    raise KeyError(f"Table not found in inventory: {fqn_upper}")
