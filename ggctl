@@ -34,8 +34,16 @@
 #   ggctl status                      Show all GG process status + lag
 #   ggctl watch [--auto-disable]      Start real-time ABEND watcher
 #   ggctl health                      Run health check
+#   ggctl diagnose                    Diagnose lag / data not flowing
 #   ggctl lag                         Show extract/replicat lag
 #   ggctl report                      Print group assignment report
+#   ggctl trails [--once|--watch]     Trail file size monitor
+#   ggctl graph [--format text|dot|html]  Pipeline dependency graph
+#
+# Recovery & Schema Evolution:
+#   ggctl recover [options]             Start auto-recovery daemon
+#   ggctl schema-check --current-csv FILE [options]
+#                                       Detect schema drift and generate ALTERs
 #
 # Maintenance:
 #   ggctl archive                     Archive old trail files
@@ -384,6 +392,17 @@ cmd_watch() {
 }
 
 # ---------------------------------------------------------------------------
+# Commands: diagnose (lag diagnostic)
+# ---------------------------------------------------------------------------
+
+cmd_diagnose() {
+    _header
+    echo -e "\n${BOLD}Running Pipeline Lag Diagnostic${NC}\n"
+    cd "$PIPELINE_HOME"
+    GG19C_HOME="$(_gg19c_home)" GG21C_HOME="$(_gg21c_home)" bash scripts/diagnose_lag.sh
+}
+
+# ---------------------------------------------------------------------------
 # Commands: health
 # ---------------------------------------------------------------------------
 
@@ -417,6 +436,106 @@ cmd_lag() {
             echo "  No replicats running"
     fi
     echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Commands: ddl (Snowflake DDL generation)
+# ---------------------------------------------------------------------------
+
+cmd_ddl() {
+    _activate_venv
+    _header
+    echo -e "\n${BOLD}Generating Snowflake DDL from inventory${NC}\n"
+    cd "$PIPELINE_HOME"
+    python3 scripts/generate_snowflake_ddl.py "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Commands: recon (reconciliation dashboard)
+# ---------------------------------------------------------------------------
+
+cmd_recon() {
+    _activate_venv
+    _header
+    echo -e "\n${BOLD}Reconciliation: Oracle vs Snowflake row counts${NC}\n"
+    cd "$PIPELINE_HOME"
+    python3 scripts/reconcile.py --input "$INVENTORY" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Commands: diff (config drift detection)
+# ---------------------------------------------------------------------------
+
+cmd_diff() {
+    _activate_venv
+    _header
+    echo -e "\n${BOLD}Config Drift Detection${NC}\n"
+    cd "$PIPELINE_HOME"
+    python3 scripts/config_diff.py --input "$INVENTORY" \
+        --gg19c-home "$(_gg19c_home)" \
+        --gg21c-home "$(_gg21c_home)" \
+        "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Commands: trails (trail file monitor)
+# ---------------------------------------------------------------------------
+
+cmd_trails() {
+    _activate_venv
+    _header
+    echo -e "\n${BOLD}Trail File Monitor${NC}\n"
+    cd "$PIPELINE_HOME"
+    python3 scripts/trail_monitor.py --config "$CONFIG_FILE" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Commands: graph (dependency graph)
+# ---------------------------------------------------------------------------
+
+cmd_graph() {
+    _activate_venv
+    _header
+    echo -e "\n${BOLD}Pipeline Dependency Graph${NC}\n"
+    cd "$PIPELINE_HOME"
+    python3 scripts/dependency_graph.py --input "$INVENTORY" --config "$CONFIG_FILE" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Commands: recover (auto-recovery daemon)
+# ---------------------------------------------------------------------------
+
+cmd_recover() {
+    _activate_venv
+    _header
+
+    echo -e "\n${BOLD}Starting Auto-Recovery Daemon${NC}"
+    echo "  Config:    $CONFIG_FILE"
+    echo "  Inventory: $INVENTORY"
+    echo "  Press Ctrl+C to stop"
+    echo ""
+
+    cd "$PIPELINE_HOME"
+    python3 scripts/auto_recovery.py \
+        --config "$CONFIG_FILE" \
+        --inventory "$INVENTORY" \
+        "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Commands: schema-check (schema evolution handler)
+# ---------------------------------------------------------------------------
+
+cmd_schema_check() {
+    _activate_venv
+    _header
+
+    echo -e "\n${BOLD}Schema Evolution Check${NC}\n"
+
+    cd "$PIPELINE_HOME"
+    python3 scripts/schema_evolution.py \
+        --config "$CONFIG_FILE" \
+        "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -477,6 +596,7 @@ ${CYAN}GoldenGate Context:${NC}
 
 ${CYAN}Pipeline:${NC}
   ggctl generate                    Generate .prm files from inventory
+  ggctl ddl [options]               Generate Snowflake CREATE TABLE DDL
   ggctl deploy 19c [--dry-run]      Deploy extract + pump
   ggctl deploy 21c [--dry-run]      Deploy replicat
   ggctl deploy all [--dry-run]      Deploy everything
@@ -490,8 +610,43 @@ ${CYAN}Monitoring:${NC}
   ggctl status                      All GG processes + lag
   ggctl watch [--auto-disable]      Real-time ABEND watcher
   ggctl health                      Run health check
+  ggctl diagnose                    Diagnose lag / data not flowing
   ggctl lag                         Show lag only
   ggctl report                      Group assignment report
+  ggctl trails --once               Trail file size check (for cron)
+  ggctl trails --watch              Continuous trail monitoring
+  ggctl graph                       ASCII pipeline dependency graph
+  ggctl graph --format html         HTML graph (output/graphs/)
+  ggctl graph --format dot          Graphviz DOT file
+
+${CYAN}Reconciliation & Drift:${NC}
+  ggctl recon [options]             Compare Oracle vs Snowflake row counts
+  ggctl recon --dry-run             Preview which tables would be checked
+  ggctl recon --threshold 5         Allow up to 5% delta (default: 1%)
+  ggctl recon --from-oracle-csv f --from-snowflake-csv f
+                                    Offline comparison from CSVs
+  ggctl diff                        Config drift: inventory vs generated
+  ggctl diff --level deployed       Drift: generated vs deployed GG
+  ggctl diff --level full           Full drift check (all levels)
+
+${CYAN}Recovery & Schema Evolution:${NC}
+  ggctl recover                     Start auto-recovery daemon (both GG)
+  ggctl recover --watch-19c-only    Watch only GG 19c
+  ggctl recover --watch-21c-only    Watch only GG 21c
+  ggctl recover --auto-disable --auto-regenerate
+                                    Full auto-recovery (disable+regen+restart)
+  ggctl recover --max-retries 3 --base-backoff 15
+                                    Custom retry settings
+  ggctl schema-check --current-csv FILE
+                                    Compare Oracle CSV vs Snowflake DDL
+  ggctl schema-check --current-csv NEW --previous-csv OLD
+                                    Compare two Oracle CSV snapshots
+  ggctl schema-check --current-csv FILE --inventory input/table_inventory.xlsx
+                                    Filter to inventory tables only
+  ggctl schema-check --current-csv FILE --apply
+                                    Apply safe ALTERs to Snowflake
+  ggctl schema-check --current-csv FILE --dry-run
+                                    Preview changes without writing
 
 ${CYAN}Maintenance:${NC}
   ggctl archive                     Archive old trail files
@@ -532,9 +687,17 @@ case "$COMMAND" in
     enable)     cmd_enable "$@" ;;
     tables)     cmd_tables "$@" ;;
     watch)      cmd_watch "$@" ;;
+    diagnose)   cmd_diagnose "$@" ;;
     health)     cmd_health "$@" ;;
     lag)        cmd_lag "$@" ;;
     report)     cmd_report "$@" ;;
+    trails)     cmd_trails "$@" ;;
+    graph)      cmd_graph "$@" ;;
+    recover)    cmd_recover "$@" ;;
+    schema-check) cmd_schema_check "$@" ;;
+    recon)      cmd_recon "$@" ;;
+    diff)       cmd_diff "$@" ;;
+    ddl)        cmd_ddl "$@" ;;
     archive)    cmd_archive "$@" ;;
     update)     cmd_update "$@" ;;
     setup)      cmd_setup "$@" ;;

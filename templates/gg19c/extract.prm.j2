@@ -17,12 +17,13 @@ NOCOMPRESSUPDATES
 NOCOMPRESSDELETES
 GETUPDATEBEFORES
 
--- Add metadata as TOKENS
+-- Monitoring: report every 30 minutes (rows processed)
+REPORTCOUNT EVERY 30 MINUTES, RATE
+
+-- Warn on long-running transactions (helps debug lag)
+WARNLONGTRANS 15M, CHECKINTERVAL 5M
+
+-- Table list
 {% for t in group.tables %}
-TABLE {{ t.schema }}.{{ t.name }},
-TOKENS (
-    TKN_OPTYPE = @GETENV('OPTYPE'),
-    TKN_TIMESTAMP = @GETENV('GGHEADER', 'COMMITTIMESTAMP'),
-    TKN_COMMITTS = @GETENV('GGHEADER', 'COMMITTIMESTAMP')
-);
+TABLE {{ t.schema }}.{{ t.name }};
 {% endfor %}
