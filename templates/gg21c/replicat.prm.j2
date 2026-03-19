@@ -16,8 +16,6 @@ MAP {{ t.schema }}.{{ t.name }}, TARGET {{ t.target_schema }}.{{ t.name }}, INSE
 COLMAP ( &
     OP_TYPE = @STREXT(@GETENV('GGHEADER', 'OPTYPE'), 1, 1), &
     OP_TS = @GETENV('GGHEADER', 'COMMITTIMESTAMP'), &
-    OGG_POSITION = @GETENV('GGHEADER', 'LOGPOSITION'), &
-    IS_DELETED = @CASE(@STREXT(@GETENV('GGHEADER', 'OPTYPE'), 1, 1), 'D', 1, 0), &
-    DELETED_TS = @GETENV('GGHEADER', 'COMMITTIMESTAMP') &
+    IS_DELETED = @CASE(@STREXT(@GETENV('GGHEADER', 'OPTYPE'), 1, 1), 'D', 1, 0) &
 );
 {% endfor %}

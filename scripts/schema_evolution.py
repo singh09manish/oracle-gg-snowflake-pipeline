@@ -512,13 +512,13 @@ def detect_changes_from_ddl(
         # New columns
         for col_name in sorted(cur_names - prev_names):
             # Skip CDC metadata columns that only exist in Snowflake
-            if col_name in ("OP_TYPE", "OP_TS", "OGG_POSITION", "IS_DELETED", "DELETED_TS"):
+            if col_name in ("OP_TYPE", "OP_TS", "IS_DELETED"):
                 continue
             change.added_columns.append(cur_cols[col_name])
 
         # Dropped columns
         for col_name in sorted(prev_names - cur_names):
-            if col_name in ("OP_TYPE", "OP_TS", "OGG_POSITION", "IS_DELETED", "DELETED_TS"):
+            if col_name in ("OP_TYPE", "OP_TS", "IS_DELETED"):
                 continue
             change.dropped_columns.append(col_name)
 

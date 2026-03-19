@@ -6,7 +6,7 @@ Supports two input modes:
   2. CSV file exported from sql/oracle_table_ddl.sql
 
 Every generated table includes GoldenGate CDC metadata columns appended
-after the source columns (OP_TYPE, OP_TS, OGG_POSITION, IS_DELETED, DELETED_TS).
+after the source columns (OP_TYPE, OP_TS, IS_DELETED).
 
 Output: one .sql file per target_schema + a combined all_tables.sql file.
 """
@@ -61,9 +61,7 @@ class ColumnInfo:
 _GG_CDC_COLUMNS = [
     ("OP_TYPE",      "VARCHAR(1)",       "-- I/U/D operation type"),
     ("OP_TS",        "TIMESTAMP_NTZ",    "-- operation timestamp from source"),
-    ("OGG_POSITION", "VARCHAR(100)",     "-- GoldenGate trail file position"),
     ("IS_DELETED",   "NUMBER(1,0) DEFAULT 0", "-- soft-delete flag (1=deleted)"),
-    ("DELETED_TS",   "TIMESTAMP_NTZ",    "-- timestamp when row was deleted"),
 ]
 
 
