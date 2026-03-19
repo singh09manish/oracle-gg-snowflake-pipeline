@@ -13,6 +13,9 @@ MAXTRANSOPS {{ maxtransops }}
 
 {% for t in group.tables %}
 MAP {{ t.schema }}.{{ t.name }}, TARGET {{ t.target_schema }}.{{ t.name }}, INSERTALLRECORDS, &
+{% if t.excluded_columns %}
+COLSEXCEPT ({{ t.excluded_columns | join(', ') }}), &
+{% endif %}
 COLMAP ( &
     OP_TYPE = @STREXT(@GETENV('GGHEADER', 'OPTYPE'), 1, 1), &
     OP_TS = @GETENV('GGHEADER', 'COMMITTIMESTAMP'), &

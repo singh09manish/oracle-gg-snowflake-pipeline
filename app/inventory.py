@@ -33,6 +33,7 @@ _GROUP_ALIASES = {"group_id", "group", "extract_group"}
 _ENABLED_ALIASES = {"enabled", "active", "status"}
 _REASON_ALIASES = {"disabled_reason", "reason", "disable_reason"}
 _DISABLED_AT_ALIASES = {"disabled_at", "disabled_date", "disabled_timestamp"}
+_EXCLUDED_COLS_ALIASES = {"excluded_columns", "exclude_columns", "colsexcept", "pii_columns"}
 
 
 def read_inventory(path: str | Path) -> List[TableInfo]:
@@ -98,7 +99,7 @@ def _read_csv(path: Path) -> List[dict]:
     with open(path, "r", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=delimiter)
         return [
-            {k.strip().lower(): v.strip() for k, v in row.items() if k}
+            {k.strip().lower(): (v.strip() if v else "") for k, v in row.items() if k}
             for row in reader
         ]
 
@@ -173,9 +174,16 @@ def _parse_rows(rows: List[dict], source: str) -> List[TableInfo]:
         disabled_reason = _resolve_col(row, _REASON_ALIASES) or ""
         disabled_at = _resolve_col(row, _DISABLED_AT_ALIASES) or ""
 
+        # COLSEXCEPT — comma-separated list of columns to exclude (PII/PCI)
+        excluded_raw = _resolve_col(row, _EXCLUDED_COLS_ALIASES) or ""
+        excluded_columns = [
+            c.strip().upper() for c in excluded_raw.split(",") if c.strip()
+        ]
+
         tables.append(TableInfo(
             schema=schema, name=table, group_id=group_id, target_schema=target,
             enabled=enabled, disabled_reason=disabled_reason, disabled_at=disabled_at,
+            excluded_columns=excluded_columns,
         ))
     return tables
 
@@ -241,7 +249,7 @@ def write_inventory(tables: List[TableInfo], path: str | Path) -> None:
     # Header row
     headers = [
         "schema", "table_name", "target_schema", "group_id",
-        "enabled", "disabled_reason", "disabled_at",
+        "enabled", "disabled_reason", "disabled_at", "excluded_columns",
     ]
     ws.append(headers)
 
@@ -255,6 +263,7 @@ def write_inventory(tables: List[TableInfo], path: str | Path) -> None:
             "Y" if t.enabled else "N",
             t.disabled_reason,
             t.disabled_at,
+            ", ".join(t.excluded_columns) if t.excluded_columns else "",
         ])
 
     # Auto-width columns

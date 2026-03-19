@@ -1,6 +1,6 @@
-schema,table_name,group_id,target_schema,enabled,disabled_reason,disabled_at
-HR,EMPLOYEES,1,HR_PROD,Y,,
-HR,DEPARTMENTS,1,HR_PROD,Y,,
+schema,table_name,group_id,target_schema,enabled,disabled_reason,disabled_at,excluded_columns
+HR,EMPLOYEES,1,HR_PROD,Y,,,"SSN,TAX_ID"
+HR,DEPARTMENTS,1,HR_PROD,Y,,,
 HR,JOBS,1,HR_PROD,Y,,
 HR,JOB_HISTORY,1,HR_PROD,Y,,
 HR,LOCATIONS,1,HR_PROD,Y,,

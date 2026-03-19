@@ -27,6 +27,7 @@ class TableInfo:
     estimated_rows: Optional[int] = None
     has_lobs: bool = False
     has_trandata: bool = False  # populated by validator
+    excluded_columns: list = None  # columns to exclude via COLSEXCEPT (PII/PCI)
 
     # --- Enable/Disable control ---
     enabled: bool = True               # False = excluded from .prm generation
@@ -38,6 +39,8 @@ class TableInfo:
         self.name = self.name.strip().upper()
         if not self.target_schema:
             self.target_schema = self.schema
+        if self.excluded_columns is None:
+            self.excluded_columns = []
         # Normalise enabled field from various Excel representations
         if isinstance(self.enabled, str):
             self.enabled = self.enabled.strip().upper() not in ("N", "NO", "FALSE", "0", "DISABLED")
