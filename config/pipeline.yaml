@@ -70,11 +70,32 @@ gg21c:
     maxtransops: 1000
 
   snowflake:
-    account: "your_account"           # e.g. xy12345.us-east-1
-    warehouse: "YOUR_WH"
-    database: "YOUR_DB"
-    role: "GG_ROLE"
+    account: ""                         # e.g. xy12345.us-east-1 (set yours here)
+    warehouse: ""                       # e.g. COMPUTE_WH
+    database: ""                        # e.g. RAW_DB
+    role: ""                            # e.g. GG_ROLE
+    schema: ""                          # default Snowflake schema (optional, overridden by inventory target_schema)
     jdbc_jar: "snowflake-jdbc-3.14.4.jar"
+
+    # Authentication — choose ONE method:
+    #
+    # Method 1: Username + Password (set via env vars at runtime)
+    #   export SNOWFLAKE_USER=gg_service_user
+    #   export SNOWFLAKE_PASSWORD=xxx
+    #
+    # Method 2: Key Pair Authentication (recommended for production)
+    #   Generate key pair:
+    #     openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+    #     openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+    #   Then assign public key in Snowflake:
+    #     ALTER USER gg_service_user SET RSA_PUBLIC_KEY='MIIBIjANBg...';
+    #
+    auth:
+      method: "password"                # "password" or "keypair"
+      user: ""                          # Snowflake username (or set SNOWFLAKE_USER env var)
+      # Key pair settings (only used when method=keypair)
+      private_key_file: ""              # path to PKCS8 private key, e.g. /home/oracle/.snowflake/rsa_key.p8
+      private_key_passphrase: ""        # passphrase if key is encrypted (or set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE env var)
 
 # -------------------------------------------------------------------
 # Archive — trail file archival before manager purges them

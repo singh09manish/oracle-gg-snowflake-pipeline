@@ -119,6 +119,8 @@ class Generator:
     def _gg21c_ctx(self, group: ExtractGroup) -> Dict[str, Any]:
         c = self.cfg
         sf = c["gg21c"]["snowflake"]
+        auth = sf.get("auth", {})
+        auth_method = auth.get("method", "password")
         return {
             "group":              group,
             "grouptransops":      c["gg21c"].get("replicat", {}).get("grouptransops", 1000),
@@ -129,6 +131,11 @@ class Generator:
             "snowflake_role":     sf.get("role", ""),
             "gg21c_home":         c["gg21c"]["home"],
             "snowflake_jdbc_jar": sf.get("jdbc_jar", "snowflake-jdbc-3.14.4.jar"),
+            # Authentication
+            "snowflake_auth_method":           auth_method,
+            "snowflake_user":                  auth.get("user", ""),
+            "snowflake_private_key_file":      auth.get("private_key_file", ""),
+            "snowflake_private_key_passphrase": auth.get("private_key_passphrase", ""),
         }
 
     # -------------------------------------------------------------------
