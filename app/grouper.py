@@ -78,14 +78,19 @@ def group_tables(
 
 def _log_summary(groups: List[ExtractGroup]) -> None:
     total = sum(g.table_count for g in groups)
+    has_rds = any(g.has_rds_tables for g in groups)
+
     log.info(
         "Grouped %d tables into %d extract groups (max %d per group)",
         total, len(groups), max(g.table_count for g in groups),
     )
     for g in groups:
+        targets = f"  targets={g.target_summary}" if has_rds else ""
+        rds_rep = f"/{g.rds_replicat_name}" if g.has_rds_tables else ""
         log.info(
-            "  %s: %3d tables  schemas=[%s]  trails=%s/%s",
+            "  %s: %3d tables  schemas=[%s]  trails=%s/%s%s%s",
             g.extract_name, g.table_count,
             ", ".join(g.schemas),
             g.extract_trail, g.pump_trail,
+            rds_rep, targets,
         )

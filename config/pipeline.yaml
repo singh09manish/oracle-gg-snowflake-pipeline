@@ -98,6 +98,28 @@ gg21c:
       private_key_passphrase: ""        # passphrase if key is encrypted (or set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE env var)
 
 # -------------------------------------------------------------------
+# Target — Oracle RDS (Classic replicat for live mirror replication)
+# -------------------------------------------------------------------
+# Tables with target=rds or target=both in the inventory will be
+# replicated to this Oracle RDS instance via GG 19c Classic replicat.
+# The replicat reads directly from the extract trail (no extra pump).
+#
+# Prerequisites:
+#   - GG credential store: ALTER CREDENTIALSTORE ADD USER ... ALIAS rds_target
+#   - Network connectivity from EC2 to target RDS (SQL*Net / port 1521)
+#   - Target tables must exist (use same DDL as source, or adapt)
+#
+target_rds:
+  enabled: false                           # set true to activate RDS replication
+  alias: "rds_target"                     # GG credential store alias (USERIDALIAS)
+
+  replicat:
+    batch_sql: true                       # BATCHSQL for bulk apply performance
+    batch_sql_buffer_size: 50000          # bytes per batch
+    grouptransops: 1000
+    maxtransops: 1000
+
+# -------------------------------------------------------------------
 # Heartbeat — end-to-end lag monitoring via GG heartbeat table
 # -------------------------------------------------------------------
 heartbeat:

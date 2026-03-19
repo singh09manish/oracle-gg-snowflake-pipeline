@@ -215,6 +215,17 @@ print(f'  Account:        {sf.get(\"account\", \"not set\")}')
 print(f'  Database:       {sf.get(\"database\", \"not set\")}')
 print(f'  Warehouse:      {sf.get(\"warehouse\", \"not set\")}')
 print(f'  Role:           {sf.get(\"role\", \"not set\")}')
+
+rds = c.get('target_rds', {})
+if rds.get('enabled', False):
+    print(f'')
+    print('RDS Target:')
+    print(f'  Alias:          {rds.get(\"alias\", \"not set\")}')
+    print(f'  Status:         enabled')
+else:
+    print(f'')
+    print(f'RDS Target:       disabled')
+
 enc = c.get('gg19c', {}).get('trail', {}).get('encryption', {})
 print(f'')
 print(f'Encryption:       {\"AES256 (enabled)\" if enc.get(\"enabled\") else \"disabled\"} ')
@@ -313,28 +324,32 @@ cmd_status() {
 
     echo ""
 
-    # GG 19c status
+    # GG 19c status (Extract + Pump + RDS Replicat)
     if [ -f "$gg19/ggsci" ]; then
-        echo -e "${BOLD}GG 19c (Extract + Pump):${NC}"
-        echo "INFO ALL" | "$gg19/ggsci" 2>/dev/null | grep -E "EXTRACT|PUMP|Program|Running|Stopped|Abended" || \
+        echo -e "${BOLD}GG 19c (Extract + Pump + RDS Replicat):${NC}"
+        echo "INFO ALL" | "$gg19/ggsci" 2>/dev/null | grep -E "EXTRACT|PUMP|REPLICAT|Program|Running|Stopped|Abended" || \
             echo "  Could not connect to GG 19c manager"
         echo ""
         echo -e "${BOLD}Extract Lag:${NC}"
         echo "LAG EXTRACT *" | "$gg19/ggsci" 2>/dev/null | grep -v "^$" || \
             echo "  Could not check lag"
+        echo ""
+        echo -e "${BOLD}RDS Replicat Lag:${NC}"
+        echo "LAG REPLICAT *" | "$gg19/ggsci" 2>/dev/null | grep -v "^$" || \
+            echo "  No RDS replicats configured"
     else
         echo -e "${YELLOW}GG 19c not found at: $gg19${NC}"
     fi
 
     echo ""
 
-    # GG 21c status
+    # GG 21c status (Snowflake Replicat)
     if [ -f "$gg21/ggsci" ]; then
         echo -e "${BOLD}GG 21c (Replicat → Snowflake):${NC}"
         echo "INFO ALL" | "$gg21/ggsci" 2>/dev/null | grep -E "REPLICAT|Program|Running|Stopped|Abended" || \
             echo "  Could not connect to GG 21c manager"
         echo ""
-        echo -e "${BOLD}Replicat Lag:${NC}"
+        echo -e "${BOLD}Snowflake Replicat Lag:${NC}"
         echo "LAG REPLICAT *" | "$gg21/ggsci" 2>/dev/null | grep -v "^$" || \
             echo "  Could not check lag"
     else
@@ -743,18 +758,19 @@ cmd_setup() {
 cmd_help() {
     echo -e "
 ${BOLD}ggctl${NC} — GoldenGate Pipeline Control CLI
+       Dual-target: Oracle RDS → GG 19c → Snowflake + RDS Target
 
 ${CYAN}GoldenGate Context:${NC}
-  ggctl use 19c                     Switch to GG 19c (extract/pump)
-  ggctl use 21c                     Switch to GG 21c (replicat/snowflake)
+  ggctl use 19c                     Switch to GG 19c (extract/pump/rds replicat)
+  ggctl use 21c                     Switch to GG 21c (snowflake replicat)
   ggctl ggsci                       Open GGSCI in current context
-  ggctl info                        Show current config + GG paths
+  ggctl info                        Show current config + GG paths + targets
 
 ${CYAN}Pipeline:${NC}
   ggctl generate                    Generate .prm files from inventory
   ggctl ddl [options]               Generate Snowflake CREATE TABLE DDL
-  ggctl deploy 19c [--dry-run]      Deploy extract + pump
-  ggctl deploy 21c [--dry-run]      Deploy replicat
+  ggctl deploy 19c [--dry-run]      Deploy extract + pump + rds replicat
+  ggctl deploy 21c [--dry-run]      Deploy snowflake replicat
   ggctl deploy all [--dry-run]      Deploy everything
 
 ${CYAN}Table Control:${NC}

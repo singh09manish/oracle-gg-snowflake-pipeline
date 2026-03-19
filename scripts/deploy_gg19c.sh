@@ -64,6 +64,12 @@ run_ggsci "$GEN_DIR/ggsci/02_add_extracts.oby"
 log "--- Step 3: ADD PUMPS ---"
 run_ggsci "$GEN_DIR/ggsci/03_add_pumps.oby"
 
+# Step 7: ADD RDS REPLICATS (only if generated)
+if [ -f "$GEN_DIR/ggsci/07_add_rds_replicats.oby" ]; then
+    log "--- Step 7: ADD RDS REPLICATS ---"
+    run_ggsci "$GEN_DIR/ggsci/07_add_rds_replicats.oby"
+fi
+
 log "--- Step 4: START ALL ---"
 run_ggsci "$GEN_DIR/ggsci/04_start_all.oby"
 

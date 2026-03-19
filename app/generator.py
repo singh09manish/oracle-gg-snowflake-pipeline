@@ -51,22 +51,54 @@ class Generator:
         log.info("Generating files for %d groups (%d tables)...",
                  len(self.groups), self.manifest.total_tables)
 
+        has_rds = self._has_rds_targets()
+        has_sf = self._has_snowflake_targets()
+
         self._gen_gg19c_manager()
-        self._gen_gg21c_manager()
 
         for g in self.groups:
             self._gen_extract(g)
-            self._gen_pump(g)
-            self._gen_replicat(g)
-            self._gen_snowflake_props(g)
+
+            # Snowflake pump + replicat (only for groups with Snowflake-bound tables)
+            if g.has_snowflake_tables:
+                self._gen_pump(g)
+
+            # RDS Classic replicat (only for groups with RDS-bound tables)
+            if g.has_rds_tables and has_rds:
+                self._gen_rds_replicat(g)
+
+        if has_sf:
+            self._gen_gg21c_manager()
+            for g in self.groups:
+                if g.has_snowflake_tables:
+                    self._gen_replicat(g)
+                    self._gen_snowflake_props(g)
 
         self._gen_gg19c_ggsci()
-        self._gen_gg21c_ggsci()
+        if has_sf:
+            self._gen_gg21c_ggsci()
         self._gen_heartbeat_setup()
         self._gen_scn_helper()
 
         log.info("Generated %d files.", len(self.manifest.files_written))
         return self.manifest
+
+    def _has_rds_targets(self) -> bool:
+        """Check if any group has RDS-targeted tables and target_rds is configured."""
+        rds_cfg = self.cfg.get("target_rds", {})
+        if not rds_cfg.get("enabled", False):
+            rds_tables = sum(len(g.rds_tables) for g in self.groups)
+            if rds_tables > 0:
+                log.warning(
+                    "%d tables target RDS but target_rds.enabled=false in pipeline.yaml. "
+                    "Set target_rds.enabled: true to generate RDS replicat configs.",
+                    rds_tables,
+                )
+            return False
+        return any(g.has_rds_tables for g in self.groups)
+
+    def _has_snowflake_targets(self) -> bool:
+        return any(g.has_snowflake_tables for g in self.groups)
 
     # -------------------------------------------------------------------
     # Config
@@ -140,6 +172,25 @@ class Generator:
             "snowflake_private_key_passphrase": auth.get("private_key_passphrase", ""),
         }
 
+    def _rds_replicat_ctx(self, group: ExtractGroup) -> Dict[str, Any]:
+        c = self.cfg
+        trail = c["gg19c"]["trail"]
+        enc = trail.get("encryption", {})
+        rds = c.get("target_rds", {})
+        rep_cfg = rds.get("replicat", {})
+        return {
+            "group":                  group,
+            "target_rds_alias":       rds.get("alias", "rds_target"),
+            # Encryption — decrypt extract trail
+            "encryption_enabled":     enc.get("enabled", False),
+            "encryption_algorithm":   enc.get("algorithm", "AES256"),
+            # Replicat tuning
+            "batch_sql":              rep_cfg.get("batch_sql", True),
+            "batch_sql_buffer_size":  rep_cfg.get("batch_sql_buffer_size", 50000),
+            "grouptransops":          rep_cfg.get("grouptransops", 1000),
+            "maxtransops":            rep_cfg.get("maxtransops", 1000),
+        }
+
     # -------------------------------------------------------------------
     # GG 19c — Manager
     # -------------------------------------------------------------------
@@ -168,6 +219,15 @@ class Generator:
         self._write(f"gg19c/dirprm/{group.pump_name}.prm", content)
 
     # -------------------------------------------------------------------
+    # GG 19c — RDS Classic Replicat
+    # -------------------------------------------------------------------
+
+    def _gen_rds_replicat(self, group: ExtractGroup) -> None:
+        ctx = self._rds_replicat_ctx(group)
+        content = self._render("gg19c/rds_replicat.prm.j2", ctx)
+        self._write(f"gg19c/dirprm/{group.rds_replicat_name}.prm", content)
+
+    # -------------------------------------------------------------------
     # GG 21c — Manager
     # -------------------------------------------------------------------
 
@@ -182,6 +242,8 @@ class Generator:
 
     def _gen_replicat(self, group: ExtractGroup) -> None:
         ctx = self._gg21c_ctx(group)
+        # Pass only Snowflake-targeted tables to the template
+        ctx["sf_tables"] = group.snowflake_tables
         content = self._render("gg21c/replicat.prm.j2", ctx)
         self._write(f"gg21c/dirprm/{group.replicat_name}.prm", content)
 
@@ -203,6 +265,9 @@ class Generator:
         alias = c["source"]["alias"]
         trail = c["gg19c"]["trail"]
         pump = c["gg19c"]["pump"]
+        has_rds = self._has_rds_targets()
+        has_sf = self._has_snowflake_targets()
+        rds_groups = [g for g in self.groups if g.has_rds_tables] if has_rds else []
 
         # 01: ADD TRANDATA per table (not SCHEMATRANDATA — explicit is safer)
         lines = [
@@ -245,24 +310,50 @@ class Generator:
             ]
         self._write_oby("gg19c/ggsci/02_add_extracts.oby", lines)
 
-        # 03: ADD PUMP
-        lines = ["-- Step 3: Add data pump extracts (pass-through to GG BigData 21c)", ""]
-        for g in self.groups:
-            lines += [
-                f"ADD EXTRACT {g.pump_name}, EXTTRAILSOURCE {trail['dir']}/{g.extract_trail}",
-                f"ADD RMTTRAIL {pump['target_trail_dir']}/{g.pump_trail}, EXTRACT {g.pump_name}",
+        # 03: ADD PUMP (only for Snowflake-bound groups)
+        if has_sf:
+            sf_groups = [g for g in self.groups if g.has_snowflake_tables]
+            lines = ["-- Step 3: Add data pump extracts (pass-through to GG BigData 21c)", ""]
+            for g in sf_groups:
+                lines += [
+                    f"ADD EXTRACT {g.pump_name}, EXTTRAILSOURCE {trail['dir']}/{g.extract_trail}",
+                    f"ADD RMTTRAIL {pump['target_trail_dir']}/{g.pump_trail}, EXTRACT {g.pump_name}",
+                    "",
+                ]
+            self._write_oby("gg19c/ggsci/03_add_pumps.oby", lines)
+
+        # 07: ADD RDS REPLICATS (only for RDS-bound groups)
+        if rds_groups:
+            rds_alias = c.get("target_rds", {}).get("alias", "rds_target")
+            lines = [
+                "-- Step 7: Add Classic replicats for RDS target (live mirror)",
+                f"-- These replicats read from the extract trail and apply to target RDS via {rds_alias}",
+                f"DBLOGIN USERIDALIAS {rds_alias}",
                 "",
             ]
-        self._write_oby("gg19c/ggsci/03_add_pumps.oby", lines)
+            for g in rds_groups:
+                lines += [
+                    f"ADD REPLICAT {g.rds_replicat_name}, EXTTRAIL {trail['dir']}/{g.extract_trail}",
+                    "",
+                ]
+            self._write_oby("gg19c/ggsci/07_add_rds_replicats.oby", lines)
 
         # 04: START ALL
         lines = ["-- Step 4: Start all GG 19c processes", ""]
         for g in self.groups:
             lines.append(f"START EXTRACT {g.extract_name}")
         lines.append("")
-        for g in self.groups:
-            lines.append(f"START EXTRACT {g.pump_name}")
-        lines += ["", "INFO ALL"]
+        if has_sf:
+            for g in self.groups:
+                if g.has_snowflake_tables:
+                    lines.append(f"START EXTRACT {g.pump_name}")
+            lines.append("")
+        if rds_groups:
+            lines.append("-- RDS Classic Replicats")
+            for g in rds_groups:
+                lines.append(f"START REPLICAT {g.rds_replicat_name}")
+            lines.append("")
+        lines.append("INFO ALL")
         self._write_oby("gg19c/ggsci/04_start_all.oby", lines)
 
         # 05: STATUS
@@ -270,9 +361,19 @@ class Generator:
         for g in self.groups:
             lines.append(f"INFO EXTRACT {g.extract_name}, DETAIL")
         lines.append("")
-        for g in self.groups:
-            lines.append(f"INFO EXTRACT {g.pump_name}, DETAIL")
-        lines += ["", "INFO ALL", "LAG EXTRACT *"]
+        if has_sf:
+            for g in self.groups:
+                if g.has_snowflake_tables:
+                    lines.append(f"INFO EXTRACT {g.pump_name}, DETAIL")
+            lines.append("")
+        if rds_groups:
+            lines.append("-- RDS Classic Replicats")
+            for g in rds_groups:
+                lines.append(f"INFO REPLICAT {g.rds_replicat_name}, DETAIL")
+            lines.append("")
+        lines += ["INFO ALL", "LAG EXTRACT *"]
+        if rds_groups:
+            lines.append("LAG REPLICAT *")
         self._write_oby("gg19c/ggsci/05_status.oby", lines)
 
     # -------------------------------------------------------------------
@@ -281,6 +382,10 @@ class Generator:
 
     def _gen_gg21c_ggsci(self) -> None:
         t_dir = self.cfg["gg21c"].get("trail", {}).get("dir", "./dirdat")
+        sf_groups = [g for g in self.groups if g.has_snowflake_tables]
+
+        if not sf_groups:
+            return
 
         # 01: ADD REPLICAT
         lines = [
@@ -288,7 +393,7 @@ class Generator:
             "-- Note: BigData Replicat uses Java handler checkpointing, not CHECKPOINTTABLE.",
             "",
         ]
-        for g in self.groups:
+        for g in sf_groups:
             lines += [
                 f"ADD REPLICAT {g.replicat_name}, EXTTRAIL {t_dir}/{g.pump_trail}",
                 "",
@@ -296,15 +401,15 @@ class Generator:
         self._write_oby("gg21c/ggsci/01_add_replicats.oby", lines)
 
         # 02: START ALL
-        lines = ["-- Step 2: Start all GG 21c Replicats", ""]
-        for g in self.groups:
+        lines = ["-- Step 2: Start all GG 21c Snowflake Replicats", ""]
+        for g in sf_groups:
             lines.append(f"START REPLICAT {g.replicat_name}")
         lines += ["", "INFO ALL"]
         self._write_oby("gg21c/ggsci/02_start_all.oby", lines)
 
         # 03: STATUS
         lines = ["-- Step 3: Check GG 21c status", ""]
-        for g in self.groups:
+        for g in sf_groups:
             lines.append(f"INFO REPLICAT {g.replicat_name}, DETAIL")
         lines += ["", "INFO ALL", "LAG REPLICAT *"]
         self._write_oby("gg21c/ggsci/03_status.oby", lines)

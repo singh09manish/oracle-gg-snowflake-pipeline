@@ -2,13 +2,16 @@
 Read and write the table inventory from/to Excel (.xlsx) or CSV.
 
 Expected columns (case-insensitive):
-  - schema         (required)  — Oracle source schema
-  - table_name     (required)  — Oracle table name
-  - group_id       (required)  — Extract group assignment
-  - target_schema  (optional)  — Snowflake target schema (defaults to source schema)
-  - enabled        (optional)  — Y/N toggle (defaults to Y if missing)
-  - disabled_reason(optional)  — Why the table was disabled
-  - disabled_at    (optional)  — ISO timestamp of when it was disabled
+  - schema            (required)  — Oracle source schema
+  - table_name        (required)  — Oracle table name
+  - group_id          (required)  — Extract group assignment
+  - target_schema     (optional)  — Snowflake target schema (defaults to source schema)
+  - target            (optional)  — Replication target: snowflake | rds | both (defaults to snowflake)
+  - rds_target_schema (optional)  — RDS target schema (defaults to source schema)
+  - enabled           (optional)  — Y/N toggle (defaults to Y if missing)
+  - disabled_reason   (optional)  — Why the table was disabled
+  - disabled_at       (optional)  — ISO timestamp of when it was disabled
+  - excluded_columns  (optional)  — Comma-separated columns to exclude (PII/PCI)
 
 Any extra columns are silently ignored.
 """
@@ -34,6 +37,8 @@ _ENABLED_ALIASES = {"enabled", "active", "status"}
 _REASON_ALIASES = {"disabled_reason", "reason", "disable_reason"}
 _DISABLED_AT_ALIASES = {"disabled_at", "disabled_date", "disabled_timestamp"}
 _EXCLUDED_COLS_ALIASES = {"excluded_columns", "exclude_columns", "colsexcept", "pii_columns"}
+_TARGET_TYPE_ALIASES = {"target", "target_type", "replication_target", "destination"}
+_RDS_TARGET_SCHEMA_ALIASES = {"rds_target_schema", "rds_schema", "target_rds_schema", "oracle_target_schema"}
 
 
 def read_inventory(path: str | Path) -> List[TableInfo]:
@@ -180,10 +185,21 @@ def _parse_rows(rows: List[dict], source: str) -> List[TableInfo]:
             c.strip().upper() for c in excluded_raw.split(",") if c.strip()
         ]
 
+        # Target type — snowflake | rds | both (defaults to snowflake)
+        target_type = (_resolve_col(row, _TARGET_TYPE_ALIASES) or "snowflake").strip().lower()
+        if target_type not in ("snowflake", "rds", "both"):
+            log.warning("Row %d: invalid target '%s' for %s.%s — defaulting to 'snowflake'",
+                        i, target_type, schema, table)
+            target_type = "snowflake"
+
+        # RDS target schema — defaults to source schema
+        rds_target_schema = _resolve_col(row, _RDS_TARGET_SCHEMA_ALIASES) or ""
+
         tables.append(TableInfo(
             schema=schema, name=table, group_id=group_id, target_schema=target,
             enabled=enabled, disabled_reason=disabled_reason, disabled_at=disabled_at,
             excluded_columns=excluded_columns,
+            target=target_type, rds_target_schema=rds_target_schema,
         ))
     return tables
 
@@ -212,6 +228,17 @@ def _validate(tables: List[TableInfo], source: str) -> None:
         "Loaded %d tables across %d schemas from %s: %s",
         len(tables), len(schemas), source, ", ".join(sorted(schemas)),
     )
+
+    # Target distribution
+    sf_count = sum(1 for t in enabled if t.goes_to_snowflake)
+    rds_count = sum(1 for t in enabled if t.goes_to_rds)
+    both_count = sum(1 for t in enabled if t.target == "both")
+    if rds_count > 0:
+        log.info(
+            "  Targets: %d → Snowflake, %d → RDS, %d → Both",
+            sf_count - both_count, rds_count - both_count, both_count,
+        )
+
     if disabled:
         log.info(
             "  %d tables DISABLED (will be excluded from .prm generation)",
@@ -248,8 +275,9 @@ def write_inventory(tables: List[TableInfo], path: str | Path) -> None:
 
     # Header row
     headers = [
-        "schema", "table_name", "target_schema", "group_id",
-        "enabled", "disabled_reason", "disabled_at", "excluded_columns",
+        "schema", "table_name", "target_schema", "group_id", "target",
+        "rds_target_schema", "enabled", "disabled_reason", "disabled_at",
+        "excluded_columns",
     ]
     ws.append(headers)
 
@@ -260,6 +288,8 @@ def write_inventory(tables: List[TableInfo], path: str | Path) -> None:
             t.name,
             t.target_schema,
             t.group_id,
+            t.target,
+            t.rds_target_schema,
             "Y" if t.enabled else "N",
             t.disabled_reason,
             t.disabled_at,
@@ -276,7 +306,7 @@ def write_inventory(tables: List[TableInfo], path: str | Path) -> None:
     red_fill = PatternFill(start_color="FFE0E0", end_color="FFE0E0", fill_type="solid")
     red_font = Font(color="CC0000")
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(headers)):
-        enabled_cell = row[4]  # 0-indexed: column E = "enabled"
+        enabled_cell = row[6]  # 0-indexed: column G = "enabled"
         if str(enabled_cell.value).upper() == "N":
             for cell in row:
                 cell.fill = red_fill
