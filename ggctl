@@ -539,6 +539,162 @@ cmd_schema_check() {
 }
 
 # ---------------------------------------------------------------------------
+# Commands: start-from-scn (disaster recovery — start extract from SCN)
+# ---------------------------------------------------------------------------
+
+cmd_start_from_scn() {
+    local process="${1:-}"
+    local scn="${2:-}"
+
+    if [ -z "$process" ] || [ -z "$scn" ]; then
+        echo "Usage: ggctl start-from-scn <EXTRACT_NAME> <SCN>" >&2
+        echo "" >&2
+        echo "Examples:" >&2
+        echo "  ggctl start-from-scn EXT01 12345678" >&2
+        echo "  ggctl start-from-scn EXT02 98765432" >&2
+        echo "" >&2
+        echo "To find the current SCN:" >&2
+        echo "  sqlplus> SELECT CURRENT_SCN FROM V\$DATABASE;" >&2
+        echo "  Or: sqlplus> @sql/get_current_scn.sql" >&2
+        exit 1
+    fi
+
+    _header
+    local gg19=$(_gg19c_home)
+
+    if [ ! -f "$gg19/ggsci" ]; then
+        echo -e "${RED}ggsci not found at: $gg19/ggsci${NC}" >&2
+        exit 1
+    fi
+
+    process=$(echo "$process" | tr '[:lower:]' '[:upper:]')
+
+    echo -e "${BOLD}Starting $process from SCN $scn${NC}"
+    echo ""
+    echo -e "${YELLOW}This will:${NC}"
+    echo "  1. DELETE the existing extract $process"
+    echo "  2. UNREGISTER it from Oracle logmining"
+    echo "  3. Re-ADD it with BEGIN AT SCN $scn"
+    echo "  4. Re-REGISTER it"
+    echo "  5. START it"
+    echo ""
+
+    # Find the trail prefix for this extract
+    local trail_prefix=""
+    _activate_venv
+    trail_prefix=$(python3 -c "
+import yaml
+with open('$CONFIG_FILE') as f:
+    c = yaml.safe_load(f)
+trail_dir = c.get('gg19c', {}).get('trail', {}).get('dir', './dirdat')
+alias = c.get('source', {}).get('alias', 'rdsadmin')
+# Derive trail prefix from extract name (EXT01 → e1, EXT10 → ea)
+name = '$process'
+num = int(name[3:])
+if num <= 9:
+    prefix = f'e{num}'
+else:
+    prefix = f'e{chr(ord(\"a\") + num - 10)}'
+print(f'{alias}|{trail_dir}/{prefix}')
+" 2>/dev/null)
+
+    local alias=$(echo "$trail_prefix" | cut -d'|' -f1)
+    local trail_path=$(echo "$trail_prefix" | cut -d'|' -f2)
+
+    echo -e "  Alias: $alias"
+    echo -e "  Trail: $trail_path"
+    echo ""
+    read -p "Proceed? (y/N) " confirm
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo "Aborted."
+        exit 0
+    fi
+
+    # Build and execute GGSCI commands
+    local oby_file="/tmp/ggctl_scn_${process}.oby"
+    cat > "$oby_file" <<GGSCI_EOF
+DBLOGIN USERIDALIAS $alias
+STOP EXTRACT $process
+DELETE EXTRACT $process
+UNREGISTER EXTRACT $process DATABASE
+ADD EXTRACT $process, INTEGRATED TRANLOG, SCN $scn
+ADD EXTTRAIL $trail_path, EXTRACT $process
+REGISTER EXTRACT $process DATABASE
+START EXTRACT $process
+INFO EXTRACT $process, DETAIL
+GGSCI_EOF
+
+    echo -e "\n${BOLD}Executing GGSCI commands:${NC}"
+    cat "$oby_file"
+    echo ""
+
+    cd "$gg19"
+    export LD_LIBRARY_PATH="$gg19/lib:${LD_LIBRARY_PATH:-}"
+    "$gg19/ggsci" < "$oby_file"
+
+    rm -f "$oby_file"
+    echo -e "\n${GREEN}$process restarted from SCN $scn${NC}"
+}
+
+# ---------------------------------------------------------------------------
+# Commands: heartbeat (setup/check heartbeat table)
+# ---------------------------------------------------------------------------
+
+cmd_heartbeat() {
+    local subcmd="${1:-status}"
+    shift 2>/dev/null || true
+
+    _header
+    local gg19=$(_gg19c_home)
+
+    case "$subcmd" in
+        setup)
+            echo -e "\n${BOLD}Setting up GG heartbeat table${NC}\n"
+            if [ -f "$PIPELINE_HOME/output/gg19c/ggsci/00_heartbeat_setup.oby" ]; then
+                echo "Running: output/gg19c/ggsci/00_heartbeat_setup.oby"
+                if [ -f "$gg19/ggsci" ]; then
+                    cd "$gg19"
+                    export LD_LIBRARY_PATH="$gg19/lib:${LD_LIBRARY_PATH:-}"
+                    "$gg19/ggsci" < "$PIPELINE_HOME/output/gg19c/ggsci/00_heartbeat_setup.oby"
+                else
+                    echo -e "${RED}ggsci not found. Run in dry-run mode:${NC}"
+                    cat "$PIPELINE_HOME/output/gg19c/ggsci/00_heartbeat_setup.oby"
+                fi
+            else
+                echo -e "${RED}Heartbeat setup file not found. Run: ggctl generate${NC}"
+                exit 1
+            fi
+            echo ""
+            echo -e "${BOLD}Next steps:${NC}"
+            echo "  1. Run the Snowflake DDL to create heartbeat tables:"
+            echo "     snowsql -f output/gg21c/heartbeat/snowflake_heartbeat_ddl.sql"
+            echo ""
+            echo "  2. Add heartbeat table to your extract .prm (if not already there):"
+            echo "     TABLE GGADMIN.GG_HEARTBEAT;"
+            echo "     TABLE GGADMIN.GG_HEARTBEAT_HISTORY;"
+            ;;
+
+        status|check)
+            echo -e "\n${BOLD}Heartbeat Status${NC}\n"
+            if [ -f "$gg19/ggsci" ]; then
+                echo "INFO HEARTBEATTABLE" | "$gg19/ggsci" 2>/dev/null || \
+                    echo "  Could not query heartbeat table"
+            else
+                echo "  ggsci not available — cannot check heartbeat"
+            fi
+            ;;
+
+        *)
+            echo "Usage: ggctl heartbeat [setup|status]" >&2
+            echo ""
+            echo "  setup  — Create heartbeat table in Oracle + Snowflake DDL"
+            echo "  status — Check heartbeat table status via GGSCI"
+            exit 1
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # Commands: report
 # ---------------------------------------------------------------------------
 
@@ -629,6 +785,12 @@ ${CYAN}Reconciliation & Drift:${NC}
   ggctl diff --level deployed       Drift: generated vs deployed GG
   ggctl diff --level full           Full drift check (all levels)
 
+${CYAN}Disaster Recovery:${NC}
+  ggctl start-from-scn EXT01 12345678
+                                    Restart extract from specific Oracle SCN
+  ggctl heartbeat setup             Create heartbeat table in Oracle
+  ggctl heartbeat status            Check heartbeat table status
+
 ${CYAN}Recovery & Schema Evolution:${NC}
   ggctl recover                     Start auto-recovery daemon (both GG)
   ggctl recover --watch-19c-only    Watch only GG 19c
@@ -695,6 +857,8 @@ case "$COMMAND" in
     graph)      cmd_graph "$@" ;;
     recover)    cmd_recover "$@" ;;
     schema-check) cmd_schema_check "$@" ;;
+    start-from-scn) cmd_start_from_scn "$@" ;;
+    heartbeat)  cmd_heartbeat "$@" ;;
     recon)      cmd_recon "$@" ;;
     diff)       cmd_diff "$@" ;;
     ddl)        cmd_ddl "$@" ;;

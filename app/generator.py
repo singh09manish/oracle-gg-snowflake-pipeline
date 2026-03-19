@@ -62,6 +62,8 @@ class Generator:
 
         self._gen_gg19c_ggsci()
         self._gen_gg21c_ggsci()
+        self._gen_heartbeat_setup()
+        self._gen_scn_helper()
 
         log.info("Generated %d files.", len(self.manifest.files_written))
         return self.manifest
@@ -216,15 +218,27 @@ class Generator:
             lines.append("")
         self._write_oby("gg19c/ggsci/01_trandata.oby", lines)
 
-        # 02: ADD EXTRACT + REGISTER
+        # 02: ADD EXTRACT + REGISTER (supports BEGIN NOW or BEGIN AT SCN)
+        scn_cfg = c.get("scn", {})
+        default_begin = "BEGIN NOW"  # default: start from current position
+
         lines = [
             "-- Step 2: Add integrated extracts and register with Oracle logmining server",
+            "-- To start from a specific SCN, edit pipeline.yaml → scn.extracts.EXTnn",
+            "-- Or use: ggctl start-from-scn EXT01 12345678",
             f"DBLOGIN USERIDALIAS {alias}",
             "",
         ]
         for g in self.groups:
+            # Check if a specific SCN is configured for this extract
+            scn_value = scn_cfg.get("extracts", {}).get(g.extract_name, "")
+            if scn_value:
+                begin_clause = f"BEGIN AT SCN {scn_value}"
+            else:
+                begin_clause = default_begin
+
             lines += [
-                f"ADD EXTRACT {g.extract_name}, INTEGRATED TRANLOG, BEGIN NOW",
+                f"ADD EXTRACT {g.extract_name}, INTEGRATED TRANLOG, {begin_clause}",
                 f"ADD EXTTRAIL {trail['dir']}/{g.extract_trail}, EXTRACT {g.extract_name}",
                 f"REGISTER EXTRACT {g.extract_name} DATABASE",
                 "",
@@ -294,6 +308,196 @@ class Generator:
             lines.append(f"INFO REPLICAT {g.replicat_name}, DETAIL")
         lines += ["", "INFO ALL", "LAG REPLICAT *"]
         self._write_oby("gg21c/ggsci/03_status.oby", lines)
+
+    # -------------------------------------------------------------------
+    # Heartbeat table — end-to-end lag monitoring
+    # -------------------------------------------------------------------
+
+    def _gen_heartbeat_setup(self) -> None:
+        """Generate heartbeat table setup scripts for GG 19c and 21c."""
+        c = self.cfg
+        hb = c.get("heartbeat", {})
+        if not hb.get("enabled", True):
+            return
+
+        alias = c["source"]["alias"]
+        hb_schema = hb.get("schema", c["source"]["alias"].upper())
+        hb_frequency = hb.get("frequency_seconds", 60)
+        hb_retain_hours = hb.get("retain_hours", 24)
+        hb_purge_frequency = hb.get("purge_frequency_minutes", 10)
+
+        # GG 19c: Setup heartbeat table
+        lines = [
+            "-- Heartbeat Table Setup (GG 19c)",
+            "-- Creates GG_HEARTBEAT + GG_HEARTBEAT_HISTORY tables in Oracle",
+            "-- The extract automatically writes a heartbeat row every N seconds.",
+            "-- The replicat reads it on the target to calculate true end-to-end lag.",
+            "",
+            f"DBLOGIN USERIDALIAS {alias}",
+            "",
+            "-- Add heartbeat table (creates table + scheduled job)",
+            f"ADD HEARTBEATTABLE, UPDATE FREQUENCY {hb_frequency}, "
+            f"PURGE FREQUENCY {hb_purge_frequency}, "
+            f"RETAIN {hb_retain_hours} HOURS",
+            "",
+            "-- Verify heartbeat table was created",
+            "INFO HEARTBEATTABLE",
+            "",
+        ]
+        self._write_oby("gg19c/ggsci/00_heartbeat_setup.oby", lines)
+
+        # GG 21c: Heartbeat monitoring query (for Snowflake)
+        snowflake_hb_ddl = [
+            "-- Heartbeat Monitoring Table (Snowflake)",
+            "-- This table receives heartbeat rows from GG replicat.",
+            "-- Query it to measure true end-to-end lag:",
+            "--",
+            "--   SELECT",
+            "--     INCOMING_HEARTBEAT_TS,",
+            "--     CURRENT_TIMESTAMP() AS snowflake_ts,",
+            "--     TIMESTAMPDIFF('SECOND', INCOMING_HEARTBEAT_TS, CURRENT_TIMESTAMP()) AS lag_seconds",
+            "--   FROM GG_HEARTBEAT",
+            "--   ORDER BY INCOMING_HEARTBEAT_TS DESC LIMIT 1;",
+            "--",
+            "-- Automated lag alert query:",
+            "--   SELECT CASE",
+            "--     WHEN TIMESTAMPDIFF('SECOND', MAX(INCOMING_HEARTBEAT_TS), CURRENT_TIMESTAMP()) > 300",
+            "--     THEN 'CRITICAL: GG lag > 5 minutes'",
+            "--     WHEN TIMESTAMPDIFF('SECOND', MAX(INCOMING_HEARTBEAT_TS), CURRENT_TIMESTAMP()) > 60",
+            "--     THEN 'WARNING: GG lag > 1 minute'",
+            "--     ELSE 'OK'",
+            "--   END AS lag_status",
+            "--   FROM GG_HEARTBEAT;",
+            "",
+            "CREATE TABLE IF NOT EXISTS GG_HEARTBEAT (",
+            "    LOCAL_CSN                  NUMBER,",
+            "    LOCAL_CSN_COMMIT_TS        TIMESTAMP_NTZ,",
+            "    INCOMING_EXTRACT           VARCHAR(50),",
+            "    INCOMING_ROUTING_PATH      VARCHAR(500),",
+            "    INCOMING_COMMIT_TS         TIMESTAMP_NTZ,",
+            "    INCOMING_HEARTBEAT_TS      TIMESTAMP_NTZ,",
+            "    INCOMING_LAG               NUMBER,",
+            "    OP_TYPE                    VARCHAR(1),",
+            "    OP_TS                      TIMESTAMP_NTZ,",
+            "    IS_DELETED                 NUMBER(1,0) DEFAULT 0",
+            ");",
+            "",
+            "CREATE TABLE IF NOT EXISTS GG_HEARTBEAT_HISTORY (",
+            "    LOCAL_CSN                  NUMBER,",
+            "    LOCAL_CSN_COMMIT_TS        TIMESTAMP_NTZ,",
+            "    INCOMING_EXTRACT           VARCHAR(50),",
+            "    INCOMING_ROUTING_PATH      VARCHAR(500),",
+            "    INCOMING_COMMIT_TS         TIMESTAMP_NTZ,",
+            "    INCOMING_HEARTBEAT_TS      TIMESTAMP_NTZ,",
+            "    INCOMING_LAG               NUMBER,",
+            "    OP_TYPE                    VARCHAR(1),",
+            "    OP_TS                      TIMESTAMP_NTZ,",
+            "    IS_DELETED                 NUMBER(1,0) DEFAULT 0",
+            ");",
+        ]
+        self._write("gg21c/heartbeat/snowflake_heartbeat_ddl.sql",
+                     "\n".join(snowflake_hb_ddl))
+
+    # -------------------------------------------------------------------
+    # SCN helper — start extract/replicat from specific SCN
+    # -------------------------------------------------------------------
+
+    def _gen_scn_helper(self) -> None:
+        """Generate SCN helper scripts for disaster recovery scenarios."""
+        c = self.cfg
+        alias = c["source"]["alias"]
+        trail = c["gg19c"]["trail"]
+        t_dir = self.cfg["gg21c"].get("trail", {}).get("dir", "./dirdat")
+
+        # Oracle query to find current SCN
+        scn_query = [
+            "-- =============================================================================",
+            "-- get_current_scn.sql",
+            "-- ",
+            "-- Run in Oracle to get the current System Change Number (SCN).",
+            "-- Use this SCN to start/restart an extract from a known point.",
+            "-- =============================================================================",
+            "",
+            "-- Current SCN",
+            "SELECT CURRENT_SCN FROM V$DATABASE;",
+            "",
+            "-- Find SCN at a specific point in time (useful for recovery)",
+            "-- Replace the timestamp with your desired recovery point:",
+            "SELECT TIMESTAMP_TO_SCN(TO_TIMESTAMP('2026-03-18 10:00:00', 'YYYY-MM-DD HH24:MI:SS'))",
+            "       AS recovery_scn",
+            "FROM DUAL;",
+            "",
+            "-- Find SCN from GG extract checkpoint (last processed position)",
+            "-- Run in GGSCI: INFO EXTRACT EXTnn, SHOWCH",
+            "",
+            "-- LogMiner checkpoint SCN (what the extract has read up to)",
+            "SELECT * FROM DBA_LOGMNR_SESSION WHERE SESSION_NAME LIKE 'OGG%';",
+        ]
+        self._write("sql/get_current_scn.sql", "\n".join(scn_query))
+
+        # GG 19c: SCN-based add extract (per group)
+        lines = [
+            "-- =============================================================================",
+            "-- Start extracts from a specific SCN (disaster recovery)",
+            "-- =============================================================================",
+            "--",
+            "-- USAGE:",
+            "--   1. Find the recovery SCN:",
+            "--      sqlplus> @sql/get_current_scn.sql",
+            "--",
+            "--   2. Edit the SCN values below",
+            "--",
+            "--   3. Run this obeyfile:",
+            "--      ggsci> OBEY gg19c/ggsci/06_add_extracts_from_scn.oby",
+            "--",
+            "--   Or use ggctl:",
+            "--      ggctl start-from-scn EXT01 12345678",
+            "-- =============================================================================",
+            "",
+            f"DBLOGIN USERIDALIAS {alias}",
+            "",
+            "-- !! EDIT THESE SCN VALUES BEFORE RUNNING !!",
+            "",
+        ]
+        for g in self.groups:
+            lines += [
+                f"-- {g.extract_name}: Replace <SCN> with actual SCN value",
+                f"-- DELETE EXTRACT {g.extract_name}",
+                f"-- UNREGISTER EXTRACT {g.extract_name} DATABASE",
+                f"-- ADD EXTRACT {g.extract_name}, INTEGRATED TRANLOG, SCN <SCN>",
+                f"-- ADD EXTTRAIL {trail['dir']}/{g.extract_trail}, EXTRACT {g.extract_name}",
+                f"-- REGISTER EXTRACT {g.extract_name} DATABASE",
+                f"-- START EXTRACT {g.extract_name}",
+                "",
+            ]
+        self._write_oby("gg19c/ggsci/06_add_extracts_from_scn.oby", lines)
+
+        # GG 21c: SCN-based replicat positioning
+        lines = [
+            "-- =============================================================================",
+            "-- Position replicat at specific trail file + RBA (disaster recovery)",
+            "-- =============================================================================",
+            "--",
+            "-- USAGE:",
+            "--   1. Find the trail file and RBA from the last good checkpoint:",
+            "--      ggsci> INFO REPLICAT REPnn, DETAIL",
+            "--",
+            "--   2. Edit the trail file path and RBA below",
+            "--",
+            "--   3. Run this obeyfile:",
+            "--      ggsci> OBEY gg21c/ggsci/04_position_replicat.oby",
+            "-- =============================================================================",
+            "",
+        ]
+        for g in self.groups:
+            lines += [
+                f"-- {g.replicat_name}: Replace <trail_file> and <rba> with actual values",
+                f"-- STOP REPLICAT {g.replicat_name}",
+                f"-- ALTER REPLICAT {g.replicat_name}, EXTSEQNO <trail_seq>, EXTRBA <rba>",
+                f"-- START REPLICAT {g.replicat_name}",
+                "",
+            ]
+        self._write_oby("gg21c/ggsci/04_position_replicat.oby", lines)
 
     def _write_oby(self, rel_path: str, lines: List[str]) -> None:
         self._write(rel_path, "\n".join(lines))

@@ -98,6 +98,34 @@ gg21c:
       private_key_passphrase: ""        # passphrase if key is encrypted (or set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE env var)
 
 # -------------------------------------------------------------------
+# Heartbeat — end-to-end lag monitoring via GG heartbeat table
+# -------------------------------------------------------------------
+heartbeat:
+  enabled: true
+  schema: "GGADMIN"                   # Oracle schema for heartbeat table
+  frequency_seconds: 60               # how often extract writes a heartbeat row
+  retain_hours: 24                    # how long to keep heartbeat history
+  purge_frequency_minutes: 10         # how often to purge old heartbeat rows
+
+# -------------------------------------------------------------------
+# SCN — System Change Number for disaster recovery
+# -------------------------------------------------------------------
+# By default, extracts start with BEGIN NOW (current position).
+# To start from a specific SCN (e.g., after disaster recovery):
+#   1. Find the SCN: sqlplus> @sql/get_current_scn.sql
+#   2. Set it here and re-run: ggctl generate && ggctl deploy 19c
+#   3. Or use: ggctl start-from-scn EXT01 12345678
+#
+# After successful start, remove the SCN entries so future
+# regenerations use BEGIN NOW again.
+scn:
+  extracts: {}
+  # Example: start EXT01 from SCN 12345678
+  # extracts:
+  #   EXT01: 12345678
+  #   EXT02: 12345679
+
+# -------------------------------------------------------------------
 # Archive — trail file archival before manager purges them
 # -------------------------------------------------------------------
 archive:
