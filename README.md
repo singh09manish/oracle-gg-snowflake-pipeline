@@ -223,7 +223,7 @@ The Excel/CSV file is the **single source of truth** for the entire pipeline. Ev
 - **REP01** (Snowflake): MAP for EMPLOYEES, DEPARTMENTS, JOBS (not COUNTRIES — it's RDS-only)
 - **RDB01** (RDS): MAP for EMPLOYEES, DEPARTMENTS, COUNTRIES (not JOBS — it's Snowflake-only)
 - **BAD_TABLE**: Excluded from everything (disabled)
-- **SSN, TAX_ID**: Excluded via COLSEXCEPT on EMPLOYEES in both targets
+- **SSN, TAX_ID**: Excluded on EMPLOYEES — `@COLSTAT(NULL)` in Snowflake, `COLSEXCEPT` in RDS
 
 ### Column aliases
 
@@ -405,14 +405,27 @@ Use the `excluded_columns` field in the inventory to prevent sensitive columns f
 HR,EMPLOYEES,1,HR_PROD,both,HR_MIRROR,Y,,,"SSN,TAX_ID"
 ```
 
-This generates `COLSEXCEPT` in both Snowflake and RDS replicat MAP statements:
+This generates different exclusion syntax per target:
+
+**Snowflake** (BigData replicat — COLSEXCEPT not supported in JDBC handler):
 ```
 MAP HR.EMPLOYEES, TARGET HR_PROD.EMPLOYEES, INSERTALLRECORDS, &
-COLSEXCEPT (SSN, TAX_ID), &
-COLMAP ( ... );
+COLMAP ( &
+    OP_TYPE = @STREXT(@GETENV('GGHEADER', 'OPTYPE'), 1, 1), &
+    OP_TS = @GETENV('GGHEADER', 'COMMITTIMESTAMP'), &
+    SSN = @COLSTAT(NULL), &
+    TAX_ID = @COLSTAT(NULL), &
+    IS_DELETED = @CASE(...) &
+);
 ```
 
-The columns are still captured by the extract (for other potential consumers) but excluded at the replicat level.
+**RDS** (Classic replicat — COLSEXCEPT supported):
+```
+MAP HR.EMPLOYEES, TARGET HR_MIRROR.EMPLOYEES, &
+COLSEXCEPT (SSN, TAX_ID);
+```
+
+The columns are still captured by the extract (for other potential consumers) but excluded/nullified at the replicat level.
 
 ---
 
@@ -643,7 +656,7 @@ oracle-gg-snowflake-pipeline/
 | **Dual-target from shared extract** | One extract trail feeds both Snowflake (via pump → BigData replicat) and RDS (via Classic replicat). No data duplication at the source |
 | **INSERTALLRECORDS for Snowflake** | Append-only staging preserves full CDC history. Downstream MERGE/SCD handles dedup |
 | **Standard replication for RDS** | Live mirror — current-state tables. No CDC metadata columns needed |
-| **COLSEXCEPT for PII/PCI** | Sensitive columns excluded at replicat level in both targets. Extract still captures full row for other potential consumers |
+| **PII/PCI column exclusion** | `@COLSTAT(NULL)` in BigData replicat (COLSEXCEPT not supported in JDBC handler), `COLSEXCEPT` in Classic RDS replicat. Extract still captures full row for other consumers |
 | **AES256 encryption end-to-end** | ENCRYPTTRAIL (at rest) + ENCRYPT RMTHOST (in transit) + TLS JDBC (Snowflake) |
 | **No second pump for RDS** | RDS replicat reads extract trail directly (local to GG 19c). Simpler, fewer moving parts |
 | **ADD TRANDATA per table** (not SCHEMATRANDATA) | Precise supplemental logging — no overhead on non-pipeline tables |
